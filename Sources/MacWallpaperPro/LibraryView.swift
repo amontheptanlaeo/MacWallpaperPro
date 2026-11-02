@@ -29,12 +29,12 @@ struct LibraryEntry: Identifiable, Equatable {
     var subtitle: String {
         switch kind {
         case .builtin(let o): o.detail
-        case .installed(let w): "โดย \(w.manifest.author)"
+        case .installed(let w): tr("By %@", w.manifest.author)
         }
     }
 
     var isCustom: Bool {
-        if case .builtin(let o) = kind { return [.video, .web, .shader].contains(o.mode) }
+        if case .builtin(let o) = kind { return [.video, .web].contains(o.mode) }
         return false
     }
 
@@ -68,29 +68,54 @@ enum LibraryFilter: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .all: "ทั้งหมด"
-        case .builtIn: "มากับแอป"
-        case .community: "จาก Community"
-        case .custom: "สร้างเอง"
+        case .all: tr("All")
+        case .builtIn: tr("Built-in")
+        case .community: tr("From Community")
+        case .custom: tr("Custom")
         }
     }
 }
 
 // MARK: - Library
 
+extension LibraryEntry {
+    @MainActor static var all: [LibraryEntry] {
+        StyleOption.all.map { LibraryEntry(kind: .builtin($0)) } + Community.shared.installed.map { LibraryEntry(kind: .installed($0)) }
+    }
+
+    /// wallpaper ที่กำลังใช้ (หรือที่ใช้ล่าสุดตอนปิดอยู่)
+    @MainActor static func current(_ c: Config) -> LibraryEntry? {
+        all.first { e in
+            switch e.kind {
+            case .builtin(let o): return o.isSelected(c)
+            case .installed(let w):
+                let mode = c.wallpaperMode == .off ? c.lastActiveMode : c.wallpaperMode
+                return mode == .installed && c.installedID == w.id
+            }
+        }
+    }
+
+    @MainActor func canApplyDirectly(_ c: Config) -> Bool {
+        guard case .builtin(let o) = kind else { return true }
+        switch o.mode {
+        case .video: return !c.videoPath.isEmpty
+        case .web: return WallpaperRoot.resolve(c.webURL) != nil
+        default: return true
+        }
+    }
+}
+
 struct LibraryView: View {
     @EnvironmentObject var store: Store
     @ObservedObject private var community = Community.shared
-    @ObservedObject private var thumbs = Thumbnails.shared
+    @ObservedObject private var nav = Navigator.shared
     @State private var selection: String?
+    @State private var showDetails = false
     @State private var filter: LibraryFilter = .all
     @State private var search = ""
-    @State private var showInspector = true
-    @State private var desktopIconsVisible = LibraryView.readDesktopIcons()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var allEntries: [LibraryEntry] {
-        StyleOption.all.map { LibraryEntry(kind: .builtin($0)) } + community.installed.map { LibraryEntry(kind: .installed($0)) }
-    }
+    private var allEntries: [LibraryEntry] { LibraryEntry.all }
 
     private func entries(_ f: LibraryFilter) -> [LibraryEntry] {
         allEntries.filter { e in
@@ -105,35 +130,26 @@ struct LibraryView: View {
         }
     }
 
-    private var selected: LibraryEntry? {
-        let all = allEntries
-        return all.first { $0.id == selection } ?? all.first { $0.isActive(store.config) } ?? all.first
-    }
+    private var selected: LibraryEntry? { allEntries.first { $0.id == selection } }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                Picker("ตัวกรอง", selection: $filter) {
-                    ForEach(LibraryFilter.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                if store.config.wallpaperMode == .off { pausedBanner }
-                if filter == .all && search.isEmpty {
-                    section("มากับแอป", entries(.builtIn))
-                    section("จาก Community", entries(.community), empty: communityEmpty)
-                    section("สร้างเอง", entries(.custom))
-                } else {
-                    let list = entries(filter)
-                    if list.isEmpty {
-                        ContentUnavailableView.search(text: search).frame(maxWidth: .infinity, minHeight: 300)
-                    } else {
-                        grid(list)
+        HStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Space.lg) {
+                    PageHeader(title: tr("My library")) {
+                        SearchField(prompt: tr("Search library"), text: $search).frame(width: 240)
                     }
+                    filterChips
+                    NowPlayingStrip { openDetails(LibraryEntry.current(store.config)) }
+                    content
                 }
+                .padding(.horizontal, Space.page).padding(.bottom, Space.page).padding(.top, Space.xxs)
             }
-            .padding(20)
+            .frame(maxWidth: .infinity)
+            if showDetails, let e = selected {
+                DetailColumn(title: e.title, close: closeDetails) { LibraryDetails(entry: e) }
+                    .transition(.detailColumn(reduceMotion: reduceMotion))
+            }
         }
         .background { ThumbnailWarmer(entries: allEntries.filter { !$0.isCustom && !$0.isInstalled }) }
         .task(id: Shaders.params(store.config)) {
@@ -141,88 +157,139 @@ struct LibraryView: View {
             try? await Task.sleep(for: .seconds(1))
             if !Task.isCancelled { Thumbnails.shared.sync(signature: Shaders.params(store.config)) }
         }
-        .searchable(text: $search, placement: .toolbar, prompt: "ค้นหาในคลัง")
-        .toolbar { toolbar }
-        .inspector(isPresented: $showInspector) {
-            Group {
-                if let e = selected { LibraryInspector(entry: e) } else { Color.clear }
+        .onAppear(perform: consumeShowActive)
+        .onChange(of: nav.showActiveDetails) { consumeShowActive() }
+    }
+
+    private func consumeShowActive() {
+        guard nav.showActiveDetails else { return }
+        nav.showActiveDetails = false
+        openDetails(LibraryEntry.current(store.config))
+    }
+
+    private func openDetails(_ e: LibraryEntry?) {
+        guard let e else { return }
+        withMotion(Motion.panel) { selection = e.id; showDetails = true }
+    }
+
+    private func closeDetails() {
+        withMotion(Motion.panel) { showDetails = false }
+    }
+
+    // MARK: Filter
+
+    private var filterChips: some View {
+        FlowLayout() {
+            ForEach(LibraryFilter.allCases) { f in
+                Button { withMotion(Motion.quick) { filter = f } } label: { Text(f.label) }
+                    .buttonStyle(ChipButtonStyle(selected: filter == f))
+                    .accessibilityAddTraits(filter == f ? .isSelected : [])
             }
-            .inspectorColumnWidth(min: 300, ideal: 340, max: 440)
         }
-        .onAppear {
-            if selection == nil { selection = allEntries.first { $0.isActive(store.config) }?.id }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(tr("Filter"))
+    }
+
+    // MARK: Content
+
+    @ViewBuilder
+    private var content: some View {
+        if filter == .all && search.isEmpty {
+            section(tr("Built-in"), entries(.builtIn))
+            section(tr("From Community"), entries(.community), empty: AnyView(communityEmpty))
+            section(tr("Custom"), entries(.custom))
+        } else {
+            let list = entries(filter)
+            if list.isEmpty {
+                if search.isEmpty && filter == .community {
+                    communityEmpty
+                } else {
+                    StateCard(symbol: "magnifyingglass",
+                              title: search.isEmpty ? tr("No wallpapers yet") : tr("No results for “%@”", search),
+                              message: tr("Try a different search."))
+                }
+            } else {
+                grid(list)
+            }
         }
     }
 
-    // MARK: Sections
-
     @ViewBuilder
     private func section(_ title: String, _ list: [LibraryEntry], empty: AnyView? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.title3.weight(.semibold))
+        VStack(alignment: .leading, spacing: Space.sm) {
+            Text(title).font(TypeScale.section).foregroundStyle(Theme.textPrimary)
+                .accessibilityAddTraits(.isHeader)
             if list.isEmpty, let empty { empty } else { grid(list) }
         }
     }
 
     private func grid(_ list: [LibraryEntry]) -> some View {
-        LazyVGrid(columns: galleryColumns, spacing: 16) {
+        LazyVGrid(columns: Metrics.gridColumns, spacing: Space.lg) {
             ForEach(list) { e in
-                GalleryTile(title: e.title, subtitle: e.subtitle,
-                            selected: selected?.id == e.id, active: e.isActive(store.config)) {
-                    thumbnail(e)
-                } badge: {
+                WallpaperTile(title: e.title, subtitle: e.subtitle,
+                              selected: showDetails && selection == e.id,
+                              active: e.isActive(store.config),
+                              action: { tap(e) }) {
+                    EntryThumbnail(entry: e)
+                } accessory: {
                     EmptyView()
-                }
-                .onTapGesture {
-                    selection = e.id
-                    // คลิกเดียวใช้ทันทีแบบ Wallpaper Engine (ยกเว้นแบบสร้างเองที่ยังไม่ได้ตั้งไฟล์)
-                    if canApplyDirectly(e) { withAnimation(.snappy(duration: 0.2)) { e.apply() } }
                 }
                 .contextMenu { contextMenu(e) }
             }
         }
     }
 
-    private var communityEmpty: AnyView {
-        AnyView(
-            HStack(spacing: 14) {
-                Image(systemName: "sparkles").font(.title2).foregroundStyle(.pink)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("ยังไม่มี wallpaper จาก Community").font(.callout.weight(.semibold))
-                    Text("เลือกดูผลงานจากผู้สร้างคนอื่น ทั้งฟรีและเสียเงิน").font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("ไปที่ Discover") { Navigator.shared.page = .discover }
-            }
-            .padding(14)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        )
+    /// คลิกเดียวใช้ทันที (ยกเว้นแบบสร้างเองที่ยังไม่ได้ตั้งไฟล์) แล้วเปิดรายละเอียด
+    private func tap(_ e: LibraryEntry) {
+        if e.canApplyDirectly(store.config) { withMotion(Motion.quick) { e.apply() } }
+        openDetails(e)
     }
 
-    private var pausedBanner: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "pause.circle.fill").font(.title2).foregroundStyle(.secondary)
+    private var communityEmpty: some View {
+        HStack(spacing: Space.md) {
+            Image(systemName: "sparkles").font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: 40, height: 40)
+                .background(Theme.accentGradientTextSafeDiagonal, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text("ภาพพื้นหลังเคลื่อนไหวปิดอยู่").font(.callout.weight(.semibold))
-                Text("ตอนนี้ใช้ภาพพื้นหลังเดิมของ macOS คลิกภาพใดก็ได้เพื่อเปิดอีกครั้ง").font(.caption).foregroundStyle(.secondary)
+                Text(tr("No Community wallpapers yet")).font(TypeScale.bodySemibold)
+                Text(tr("Browse free and paid work from other creators.")).font(TypeScale.secondary)
+                    .foregroundStyle(Theme.textSecondary)
             }
-            Spacer()
-            Button("เปิด") { store.config.wallpaperMode = store.config.lastActiveMode }.buttonStyle(.borderedProminent)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button(tr("Go to Discover")) { withMotion { nav.page = .discover } }
+                .buttonStyle(SecondaryButtonStyle())
         }
-        .padding(14)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(Space.md)
+        .card()
     }
 
     @ViewBuilder
-    private func thumbnail(_ e: LibraryEntry) -> some View {
-        switch e.kind {
+    private func contextMenu(_ e: LibraryEntry) -> some View {
+        Button(tr("Set as wallpaper")) { e.apply() }
+        if case .installed(let w) = e.kind {
+            Button(tr("View in Community")) { NSWorkspace.shared.open(community.webPage(for: w.id)) }
+            Button(tr("Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([w.indexURL]) }
+        }
+    }
+}
+
+/// ภาพตัวอย่างของรายการในคลัง
+struct EntryThumbnail: View {
+    let entry: LibraryEntry
+    @EnvironmentObject var store: Store
+    @ObservedObject private var thumbs = Thumbnails.shared
+
+    var body: some View {
+        switch entry.kind {
         case .builtin(let o):
-            if let img = thumbs.image(e.id) {
+            if let img = thumbs.image(entry.id) {
                 Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
             } else {
                 PlaceholderThumb(symbol: o.symbol, colors: o.usesColors
                                  ? [store.config.color2.color, store.config.color3.color]
-                                 : [Color(white: 0.32), Color(white: 0.16)])
+                                 : [Theme.surfaceHover, Theme.surface])
             }
         case .installed(let w):
             if let img = NSImage(contentsOf: w.thumbURL) {
@@ -232,72 +299,72 @@ struct LibraryView: View {
             }
         }
     }
+}
 
-    @ViewBuilder
-    private func contextMenu(_ e: LibraryEntry) -> some View {
-        Button("ใช้เป็นภาพพื้นหลัง") { e.apply() }
-        if case .installed(let w) = e.kind {
-            Button("ดูใน Community") { NSWorkspace.shared.open(community.webPage(for: w.id)) }
-            Button("แสดงในไฟนด์เดอร์") { NSWorkspace.shared.activateFileViewerSelecting([w.indexURL]) }
-        }
-    }
+// MARK: - Now playing
 
-    private func canApplyDirectly(_ e: LibraryEntry) -> Bool {
-        guard case .builtin(let o) = e.kind else { return true }
-        switch o.mode {
-        case .video: return !store.config.videoPath.isEmpty
-        case .web: return WallpaperRoot.resolve(store.config.webURL) != nil
-        default: return true
-        }
-    }
+/// แถบ "กำลังเล่น": ภาพย่อ ชื่อ และหยุด/เล่นต่อ — ใช้บนหน้าคลังและหน้า Discover
+struct NowPlayingStrip: View {
+    let onCustomize: () -> Void
+    @EnvironmentObject var store: Store
+    @ObservedObject private var community = Community.shared
 
-    // MARK: Toolbar
-
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            let on = store.config.wallpaperMode != .off
-            Button {
-                store.config.wallpaperMode = on ? .off : store.config.lastActiveMode
-            } label: {
-                Label(on ? "ปิดภาพเคลื่อนไหว" : "เปิดภาพเคลื่อนไหว", systemImage: on ? "pause.circle" : "play.circle")
+    var body: some View {
+        let c = store.config
+        let on = c.wallpaperMode != .off
+        let entry = LibraryEntry.current(c)
+        HStack(spacing: Space.md) {
+            Group {
+                if let entry { EntryThumbnail(entry: entry) } else { PlaceholderThumb(symbol: "photo") }
             }
-            .help(on ? "ปิดภาพเคลื่อนไหว แล้วกลับไปใช้ภาพพื้นหลังเดิมของ macOS" : "เปิดภาพเคลื่อนไหวอีกครั้ง")
+            .frame(width: 96, height: 60)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Radius.control, style: .continuous).strokeBorder(Theme.border))
+            .saturation(on ? 1 : 0.2)
+            .accessibilityHidden(true)
 
-            Menu {
-                Toggle("แสดงไอคอนบนเดสก์ท็อป", isOn: Binding(get: { desktopIconsVisible }, set: setDesktopIcons))
-                Button("โหลดภาพพื้นหลังใหม่") { WallpaperManager.shared.reload() }
-                Divider()
-                Button("คืนค่าสีและความเร็วเริ่มต้น") {
-                    let d = Config.defaultColors
-                    store.config.color1 = d.0; store.config.color2 = d.1; store.config.color3 = d.2
-                    store.config.speed = 1
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Circle().fill(on ? Theme.success : Theme.textSecondary).frame(width: 7, height: 7)
+                    Text(on ? tr("Now playing") : tr("Live wallpaper is off"))
+                        .font(TypeScale.secondaryMedium).foregroundStyle(Theme.textSecondary)
                 }
-            } label: {
-                Label("ตัวเลือกเพิ่มเติม", systemImage: "ellipsis.circle")
+                Text(entry?.title ?? "—").font(TypeScale.section).foregroundStyle(Theme.textPrimary)
+                if !on {
+                    Text(tr("Your regular macOS wallpaper is showing. Click any wallpaper to turn it back on."))
+                        .font(TypeScale.secondary).foregroundStyle(Theme.textSecondary)
+                } else if let entry {
+                    Text(entry.subtitle).font(TypeScale.secondary).foregroundStyle(Theme.textSecondary)
+                }
             }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
 
-            Button { showInspector.toggle() } label: {
-                Label("แผงรายละเอียด", systemImage: "sidebar.right")
+            HStack(spacing: Space.xs) {
+                Button {
+                    withMotion(Motion.quick) { store.config.wallpaperMode = on ? .off : c.lastActiveMode }
+                } label: {
+                    Label(on ? tr("Pause") : tr("Turn on"), systemImage: on ? "pause.fill" : "play.fill")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .help(on ? tr("Turn off live wallpaper and return to your regular macOS wallpaper") : tr("Turn live wallpaper back on"))
+                .accessibilityLabel(on ? tr("Pause live wallpaper") : tr("Resume live wallpaper"))
+
+                Button(action: onCustomize) { Label(tr("Customize"), systemImage: "slider.horizontal.3") }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .disabled(entry == nil)
             }
-            .help("แสดงหรือซ่อนแผงรายละเอียด")
+            .fixedSize()
         }
-    }
-
-    private static func readDesktopIcons() -> Bool {
-        UserDefaults(suiteName: "com.apple.finder")?.object(forKey: "CreateDesktop") as? Bool ?? true
-    }
-
-    private func setDesktopIcons(_ visible: Bool) {
-        desktopIconsVisible = visible
-        Shell.run("/usr/bin/defaults", ["write", "com.apple.finder", "CreateDesktop", "-bool", visible ? "true" : "false"])
-        Shell.run("/usr/bin/killall", ["Finder"])
+        .padding(Space.sm)
+        .card()
     }
 }
 
-// MARK: - Inspector
+// MARK: - Details
 
-struct LibraryInspector: View {
+struct LibraryDetails: View {
     let entry: LibraryEntry
     @EnvironmentObject var store: Store
     @State private var confirmDelete = false
@@ -305,80 +372,103 @@ struct LibraryInspector: View {
     var body: some View {
         let c = store.config
         let active = entry.isActive(c)
-        Form {
-            Section {
-                preview
-                    .aspectRatio(16 / 10, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .listRowInsets(EdgeInsets(top: 10, leading: 10, bottom: 4, trailing: 10))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.title).font(.title3.weight(.semibold))
-                    Text(entry.subtitle).foregroundStyle(.secondary)
-                }
-                Button {
-                    withAnimation(.snappy(duration: 0.2)) { entry.apply() }
-                } label: {
-                    Label(active ? "กำลังใช้อยู่" : "ใช้เป็นภาพพื้นหลัง", systemImage: active ? "checkmark" : "photo.badge.checkmark")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(active || !ready)
-            } footer: {
-                if !ready { Text(readyHint).foregroundStyle(.secondary) }
-                else if entry.title == "Nebula" { Text("ลองขยับเมาส์หรือคลิกในตัวอย่างได้เลย") }
+
+        VStack(alignment: .leading, spacing: Space.sm) {
+            preview
+                .aspectRatio(16 / 10, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(Theme.border))
+                .accessibilityHidden(true)
+            Text(entry.subtitle).font(TypeScale.secondary).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                withMotion(Motion.quick) { entry.apply() }
+            } label: {
+                Label(active ? tr("In use") : tr("Set as wallpaper"), systemImage: active ? "checkmark" : "photo.badge.checkmark")
             }
-
-            sourceSections
-
-            if usesColors {
-                Section {
-                    ColorPicker("สีหลัก", selection: store.binding(\.color1), supportsOpacity: false)
-                    ColorPicker("สีรอง", selection: store.binding(\.color2), supportsOpacity: false)
-                    ColorPicker("สีพื้นหลัง", selection: store.binding(\.color3), supportsOpacity: false)
-                    LabeledContent("ความเร็ว") {
-                        Slider(value: $store.config.speed, in: 0.2...3) {
-                            EmptyView()
-                        } minimumValueLabel: {
-                            Image(systemName: "tortoise.fill").accessibilityLabel("ช้า")
-                        } maximumValueLabel: {
-                            Image(systemName: "hare.fill").accessibilityLabel("เร็ว")
-                        }
-                    }
-                    Picker("คุณภาพ", selection: $store.config.renderScale) {
-                        Text("ประหยัดพลังงาน").tag(0.5)
-                        Text("สมดุล").tag(1.0)
-                        Text("คมชัดสูงสุด").tag(2.0)
-                    }
-                } header: {
-                    Text("ปรับแต่ง")
-                } footer: {
-                    Text(entry.isInstalled
-                         ? "สีจะมีผลเฉพาะกับ wallpaper ที่ผู้สร้างรองรับการปรับสี"
-                         : "สีและความเร็วใช้ร่วมกันทุกสไตล์ · คุณภาพสูงขึ้นใช้แบตเตอรี่มากขึ้น")
-                }
-            }
-
-            if case .installed(let w) = entry.kind {
-                Section("ข้อมูล") {
-                    LabeledContent("ผู้สร้าง", value: w.manifest.author)
-                    LabeledContent("เวอร์ชัน", value: String(w.manifest.version))
-                    LabeledContent("ขนาด", value: ByteCountFormatter.string(fromByteCount: Int64(w.manifest.sizeBytes), countStyle: .file))
-                    LabeledContent("ความปลอดภัย") {
-                        Label("ตรวจลายเซ็นแล้ว · ออฟไลน์", systemImage: "checkmark.shield.fill").foregroundStyle(.green)
-                    }
-                }
-                Section {
-                    Button("ลบออกจากเครื่อง…", role: .destructive) { confirmDelete = true }
-                }
-                .confirmationDialog("ลบ “\(w.manifest.title)” ออกจากเครื่อง?", isPresented: $confirmDelete) {
-                    Button("ลบ", role: .destructive) { Community.shared.uninstall(w) }
-                } message: {
-                    Text("ติดตั้งใหม่จาก Discover ได้ทุกเมื่อ")
-                }
+            .buttonStyle(PrimaryButtonStyle(fullWidth: true))
+            .disabled(active || !ready)
+            if !ready {
+                hint(readyHint)
+            } else if entry.title == "Nebula" {
+                hint(tr("Try moving the pointer or clicking in the preview."))
             }
         }
-        .formStyle(.grouped)
+
+        sourceSections
+
+        if usesColors {
+            DetailGroup(title: tr("Customize"),
+                        footer: tr("Colors and speed are shared by all styles. Higher quality uses more battery.")) {
+                colorRow(tr("Primary color"), \.color1)
+                colorRow(tr("Secondary color"), \.color2)
+                colorRow(tr("Background color"), \.color3)
+                speedControl
+                SettingColumn(title: tr("Quality")) {
+                    SegmentedControl(label: tr("Quality"), selection: $store.config.renderScale,
+                                     options: [(0.5, tr("Power saving")), (1.0, tr("Balanced")), (2.0, tr("Maximum"))])
+                }
+                Button(tr("Reset colors and speed")) {
+                    let d = Config.defaultColors
+                    store.config.color1 = d.0; store.config.color2 = d.1; store.config.color3 = d.2
+                    store.config.speed = 1
+                }
+                .buttonStyle(SecondaryButtonStyle(fullWidth: true))
+            }
+        } else if entry.isInstalled {
+            // wallpaper จาก Community ใช้สีของผู้สร้างเอง ปรับได้แค่ความเร็ว
+            DetailGroup(title: tr("Customize")) { speedControl }
+        }
+
+        if case .installed(let w) = entry.kind {
+            DetailGroup(title: tr("Info")) {
+                infoRow(tr("Creator"), w.manifest.author)
+                infoRow(tr("Version"), String(w.manifest.version))
+                infoRow(tr("Size"), ByteCountFormatter.string(fromByteCount: Int64(w.manifest.sizeBytes), countStyle: .file))
+                StatusRow(kind: .ok, title: tr("Security"), subtitle: tr("Signature verified · Offline"))
+            }
+            Button(role: .destructive) { confirmDelete = true } label: {
+                Label(tr("Remove from Mac…"), systemImage: "trash")
+            }
+            .buttonStyle(SecondaryButtonStyle(fullWidth: true, tint: Theme.destructiveText))
+            .confirmationDialog(tr("Remove “%@” from this Mac?", w.manifest.title), isPresented: $confirmDelete) {
+                Button(tr("Remove"), role: .destructive) { Community.shared.uninstall(w) }
+            } message: {
+                Text(tr("You can reinstall it from Discover at any time."))
+            }
+        }
+    }
+
+    private var speedControl: some View {
+        SettingColumn(title: tr("Speed")) {
+            HStack(spacing: Space.xs) {
+                Image(systemName: "tortoise.fill").foregroundStyle(Theme.textSecondary).accessibilityLabel(tr("Slow"))
+                Slider(value: $store.config.speed, in: 0.2...3).labelsHidden().controlSize(.small)
+                    .accessibilityLabel(tr("Speed"))
+                    .accessibilityValue(String(format: "%.1f×", store.config.speed))
+                Image(systemName: "hare.fill").foregroundStyle(Theme.textSecondary).accessibilityLabel(tr("Fast"))
+            }
+        }
+    }
+
+    private func hint(_ s: String) -> some View {
+        Text(s).font(TypeScale.secondary).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func colorRow(_ title: String, _ kp: WritableKeyPath<Config, RGBA>) -> some View {
+        SettingRow(title: title) {
+            ColorPicker(title, selection: store.binding(kp), supportsOpacity: false).labelsHidden()
+        }
+    }
+
+    private func infoRow(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title).font(TypeScale.secondary).foregroundStyle(Theme.textSecondary)
+            Spacer(minLength: Space.sm)
+            Text(value).font(TypeScale.secondaryMedium).foregroundStyle(Theme.textPrimary)
+                .multilineTextAlignment(.trailing)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Preview
@@ -399,9 +489,6 @@ struct LibraryInspector: View {
                 WebWallpaper(source: .html(Shaders.html(fragment: Shaders.source(for: o.preset ?? .aurora), scale: 0.6)),
                              params: params, isDesktop: false, onReady: snapshot)
                     .id(entry.id)
-            case .shader:
-                WebWallpaper(source: .html(Shaders.html(fragment: c.customShader, scale: 0.6)), params: params, isDesktop: false)
-                    .id(entry.id + c.customShader.hashValue.description)
             case .video:
                 if c.videoPath.isEmpty { PlaceholderThumb(symbol: "film.fill") }
                 else { VideoWallpaper(url: URL(fileURLWithPath: c.videoPath)).id(c.videoPath) }
@@ -415,7 +502,7 @@ struct LibraryInspector: View {
                 PlaceholderThumb(symbol: "photo")
             }
         case .installed(let w):
-            WebWallpaper(source: .localHTML(w.indexURL), params: params, isDesktop: false).id(entry.id)
+            WebWallpaper(source: .localHTML(w.indexURL), params: Shaders.speedOnly(c), isDesktop: false).id(entry.id)
         }
     }
 
@@ -429,54 +516,70 @@ struct LibraryInspector: View {
         if case .builtin(let o) = entry.kind {
             switch o.mode {
             case .video:
-                Section {
-                    LabeledContent("ไฟล์วิดีโอ") {
-                        Button(store.config.videoPath.isEmpty ? "เลือกไฟล์…" : "เปลี่ยนไฟล์…") {
+                DetailGroup(title: tr("Video"), footer: tr("Loops silently. Supports MP4 and MOV.")) {
+                    SettingColumn(title: tr("Video file"),
+                                  subtitle: store.config.videoPath.isEmpty ? nil : (store.config.videoPath as NSString).lastPathComponent) {
+                        Button(store.config.videoPath.isEmpty ? tr("Choose file…") : tr("Change file…")) {
                             if let u = chooseFile([.movie]) { store.config.videoPath = u.path; entry.apply() }
                         }
+                        .buttonStyle(SecondaryButtonStyle(fullWidth: true))
+                        .help(store.config.videoPath)
                     }
-                    if !store.config.videoPath.isEmpty {
-                        Text((store.config.videoPath as NSString).lastPathComponent)
-                            .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                            .help(store.config.videoPath)
-                    }
-                } header: { Text("วิดีโอ") } footer: { Text("เล่นวนซ้ำแบบปิดเสียง รองรับ MP4 และ MOV") }
+                }
             case .web:
-                Section {
-                    TextField("ที่อยู่เว็บ", text: $store.config.webURL, prompt: Text("https://example.com"))
-                    Button("เลือกไฟล์ HTML ในเครื่อง…") {
+                DetailGroup(title: tr("Website"),
+                            footer: tr("The page responds to pointer movement and clicks on the desktop. This mode can access the internet, so use only websites you trust.")) {
+                    SettingColumn(title: tr("Web address")) {
+                        TextField(tr("Web address"), text: $store.config.webURL, prompt: Text(verbatim: "https://example.com"))
+                            .textFieldStyle(.plain)
+                            .font(TypeScale.secondary)
+                            .padding(.horizontal, Space.sm).frame(height: 30)
+                            .background(Theme.background, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: Radius.control, style: .continuous).strokeBorder(Theme.border))
+                    }
+                    Button(tr("Choose local HTML file…")) {
                         if let u = chooseFile([.html]) { store.config.webURL = u.path }
                     }
-                } header: { Text("เว็บไซต์") } footer: {
-                    Text("หน้าเว็บจะรับการขยับเมาส์และการคลิกบนเดสก์ท็อปได้ โหมดนี้ต่ออินเทอร์เน็ตได้ จึงควรใช้เฉพาะเว็บที่เชื่อถือได้")
+                    .buttonStyle(SecondaryButtonStyle(fullWidth: true))
                 }
-            case .shader:
-                ShaderEditorSection()
             default:
                 EmptyView()
             }
         }
     }
 
+    /// สีใช้ได้เฉพาะสไตล์ที่มากับแอป (Nebula/preset)
     private var usesColors: Bool {
-        switch entry.kind {
-        case .builtin(let o): o.usesColors
-        case .installed: true
-        }
+        if case .builtin(let o) = entry.kind { return o.usesColors }
+        return false
     }
 
-    private var ready: Bool {
-        guard case .builtin(let o) = entry.kind else { return true }
-        switch o.mode {
-        case .video: return !store.config.videoPath.isEmpty
-        case .web: return WallpaperRoot.resolve(store.config.webURL) != nil
-        default: return true
-        }
-    }
+    private var ready: Bool { entry.canApplyDirectly(store.config) }
 
     private var readyHint: String {
         guard case .builtin(let o) = entry.kind else { return "" }
-        return o.mode == .video ? "เลือกไฟล์วิดีโอก่อน แล้วจึงใช้เป็นภาพพื้นหลังได้" : "ใส่ที่อยู่เว็บหรือเลือกไฟล์ HTML ก่อน"
+        return o.mode == .video ? tr("Choose a video file to use it as your wallpaper.") : tr("Enter a web address or choose an HTML file first.")
+    }
+}
+
+/// กลุ่มในคอลัมน์รายละเอียด: หัวข้อเล็ก + การ์ดแถว
+struct DetailGroup<Content: View>: View {
+    let title: String
+    var footer: String? = nil
+    @ViewBuilder var content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(title).font(TypeScale.bodySemibold).foregroundStyle(Theme.textPrimary)
+                .accessibilityAddTraits(.isHeader)
+            VStack(alignment: .leading, spacing: Space.sm) { content }
+                .padding(Space.sm)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .card(fill: Theme.surfaceRaised)
+            if let footer {
+                Text(footer).font(TypeScale.secondary).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
 

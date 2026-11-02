@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bubble Garden</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #e6d8f3; }
+  canvas, #grain { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  #grain { pointer-events: none; opacity: .05; mix-blend-mode: soft-light; background-size: 160px 160px; }
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<canvas id="gl"></canvas>
+<canvas id="fx"></canvas>
+<div id="grain"></div>
+<script>
+(() => {
+'use strict';
+// Params: c1 = upper sky, c2 = horizon, c3 = lavender field
+const P = { c1: [0.84, 0.79, 0.96], c2: [1.0, 0.88, 0.86], c3: [0.72, 0.62, 0.92], speed: 1 };
+const RM = matchMedia('(prefers-reduced-motion: reduce)');
+let motion = RM.matches ? 0.2 : 1;
+RM.addEventListener && RM.addEventListener('change', e => { motion = e.matches ? 0.2 : 1; });
+let dirty = true;
+window.setP = o => {
+  if (!o) return;
+  for (const k of ['c1', 'c2', 'c3']) if (Array.isArray(o[k]) && o[k].length >= 3) { P[k] = o[k].slice(0, 3); dirty = true; }
+  if (typeof o.speed === 'number' && isFinite(o.speed)) P.speed = Math.max(0, Math.min(4, o.speed));
+};
+const rgb = (c, a = 1) => `rgba(${Math.min(255, c[0] * 255) | 0},${Math.min(255, c[1] * 255) | 0},${Math.min(255, c[2] * 255) | 0},${a})`;
+const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const lighten = (c, t) => mix(c, [1, 1, 1], t);
+const mk = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(w)); c.height = Math.max(1, Math.ceil(h)); return c; };
+let seed = 9;
+const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+
+(() => {
+  const g = mk(160, 160), x = g.getContext('2d'), d = x.createImageData(160, 160);
+  for (let i = 0; i < d.data.length; i += 4) { const v = Math.random() * 255 | 0; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255; }
+  x.putImageData(d, 0, 0);
+  document.getElementById('grain').style.backgroundImage = `url(${g.toDataURL()})`;
+})();
+
+const bgC = document.getElementById('bg'), bctx = bgC.getContext('2d');
+const fxC = document.getElementById('fx'), fctx = fxC.getContext('2d');
+const glC = document.getElementById('gl');
+const gl = glC.getContext('webgl', { premultipliedAlpha: true, alpha: true, antialias: false });
+let W = 0, H = 0, DPR = 1, U = 1;
+
+// ---------- garden ----------
+let gardenCan = null, stalkCans = [], sparkCan = null, dotCan = null;
+const stalks = [];
+function makeStalk(h, col) {
+  const w = h * 0.22, c = mk(w * DPR, h * DPR), x = c.getContext('2d'); x.scale(DPR, DPR);
+  const cx = w / 2;
+  // buds from tip down
+  const n = 11;
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1), y = h * 0.04 + t * h * 0.5 + (i & 1) * h * 0.012, r = w * (0.09 + t * 0.09);
+    for (const s of [-1, 1]) {
+      const g = x.createRadialGradient(cx + s * r * 0.6, y - r * 0.3, 0, cx + s * r * 0.6, y, r * 1.2);
+      g.addColorStop(0, rgb(lighten(col, 0.45))); g.addColorStop(1, rgb(col));
+      x.fillStyle = g; x.beginPath(); x.ellipse(cx + s * r * 0.55, y, r * 0.75, r, s * 0.4, 0, 6.283); x.fill();
+    }
+  }
+  x.strokeStyle = 'rgba(140,175,150,.9)'; x.lineWidth = Math.max(1, w * 0.05); x.lineCap = 'round';
+  x.beginPath(); x.moveTo(cx, h * 0.3); x.lineTo(cx, h); x.stroke();
+  const o = mk(c.width, c.height), ox = o.getContext('2d'); ox.filter = `blur(${0.8 * DPR}px)`; ox.drawImage(c, 0, 0);
+  return o;
+}
+function makeGarden() {
+  gardenCan = mk(W * DPR, H * DPR);
+  const x = gardenCan.getContext('2d'); x.scale(DPR, DPR);
+  seed = 9;
+  const g = x.createLinearGradient(0, 0, 0, H * 0.75);
+  g.addColorStop(0, rgb(mix(P.c1, [0.74, 0.78, 0.97], 0.3))); g.addColorStop(0.5, rgb(mix(P.c1, P.c2, 0.45))); g.addColorStop(1, rgb(P.c2));
+  x.fillStyle = g; x.fillRect(0, 0, W, H);
+  // sun haze + soft rays
+  let r = x.createRadialGradient(W * 0.18, -H * 0.05, 0, W * 0.18, -H * 0.05, H * 0.9);
+  r.addColorStop(0, 'rgba(255,250,235,.85)'); r.addColorStop(0.35, 'rgba(255,240,240,.25)'); r.addColorStop(1, 'rgba(255,240,240,0)');
+  x.fillStyle = r; x.fillRect(0, 0, W, H);
+  x.save(); x.globalCompositeOperation = 'lighter'; x.filter = `blur(${H * 0.02}px)`;
+  for (let i = 0; i < 5; i++) {
+    const a = 0.35 + i * 0.16 + rnd() * 0.05, w2 = 0.02 + rnd() * 0.03;
+    x.fillStyle = `rgba(255,245,235,${0.035 + rnd() * 0.04})`;
+    x.beginPath(); x.moveTo(W * 0.18, -H * 0.05);
+    x.lineTo(W * 0.18 + Math.cos(a - w2) * H * 1.6, -H * 0.05 + Math.sin(a - w2) * H * 1.6);
+    x.lineTo(W * 0.18 + Math.cos(a + w2) * H * 1.6, -H * 0.05 + Math.sin(a + w2) * H * 1.6); x.fill();
+  }
+  x.restore();
+  // bokeh
+  x.save(); x.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 16; i++) {
+    const bx = rnd() * W, by = rnd() * H * 0.55, br = H * (0.008 + rnd() * 0.03);
+    const bg = x.createRadialGradient(bx, by, 0, bx, by, br);
+    const c = [[1, 0.85, 0.9], [0.85, 0.85, 1], [1, 0.95, 0.85]][i % 3];
+    bg.addColorStop(0, rgb(c, 0.07)); bg.addColorStop(0.8, rgb(c, 0.05)); bg.addColorStop(1, rgb(c, 0));
+    x.fillStyle = bg; x.beginPath(); x.arc(bx, by, br, 0, 6.283); x.fill();
+  }
+  x.restore();
+  // distant round trees
+  const hz = H * 0.64;
+  x.save(); x.filter = `blur(${H * 0.002}px)`;
+  for (let i = 0; i < 22; i++) {
+    const tx = rnd() * W * 1.1 - W * 0.05, tr = H * (0.03 + rnd() * 0.05), ty = hz - tr * (0.5 + rnd() * 0.6);
+    const c = mix(mix([0.8, 0.92, 0.88], [0.86, 0.8, 0.97], rnd()), P.c1, 0.3);
+    const tg = x.createLinearGradient(0, ty - tr, 0, ty + tr);
+    tg.addColorStop(0, rgb(lighten(c, 0.2))); tg.addColorStop(1, rgb(c));
+    x.fillStyle = tg; x.beginPath(); x.arc(tx, ty, tr, 0, 6.283); x.arc(tx + tr * 0.7, ty + tr * 0.25, tr * 0.75, 0, 6.283); x.fill();
+  }
+  x.restore();
+  // field bands
+  const bands = [
+    { y: 0.64, a: 0.012, col: mix(lighten(P.c3, 0.45), [0.84, 0.93, 0.88], 0.6) },
+    { y: 0.69, a: 0.016, col: mix(lighten(P.c3, 0.3), [0.78, 0.91, 0.85], 0.7) },
+    { y: 0.76, a: 0.02, col: mix(lighten(P.c3, 0.15), [0.74, 0.9, 0.82], 0.75) },
+    { y: 0.86, a: 0.024, col: mix(lighten(P.c3, 0.05), [0.7, 0.88, 0.8], 0.75) },
+  ];
+  for (let b = 0; b < bands.length; b++) {
+    const bd = bands[b], ph = rnd() * 6, f = (1.3 + rnd()) * Math.PI / W;
+    const yAt = px => H * (bd.y + bd.a * Math.sin(px * f + ph) + bd.a * 0.5 * Math.sin(px * f * 3.1 + ph * 2));
+    x.beginPath(); x.moveTo(0, H);
+    for (let px = 0; px <= W + 10; px += 10) x.lineTo(px, yAt(px));
+    x.lineTo(W, H); x.closePath();
+    const bg = x.createLinearGradient(0, H * (bd.y - 0.03), 0, H);
+    bg.addColorStop(0, rgb(lighten(bd.col, 0.25))); bg.addColorStop(0.5, rgb(bd.col)); bg.addColorStop(1, rgb(mix(bd.col, [0.6, 0.5, 0.8], 0.25)));
+    x.fillStyle = bg; x.fill();
+    // lavender bushes: rows of rounded mounds, bigger toward the viewer
+    const rows = [1, 2, 2, 2][b];
+    for (let rI = 0; rI < rows; rI++) {
+      const rx = H * (0.018 + b * 0.022 + rI * 0.01), ry = rx * 0.62;
+      const off = H * 0.008 + rI * ry * 1.25 + b * H * 0.004;
+      const rc = mix(lighten(P.c3, 0.18 - b * 0.05), [0.66, 0.54, 0.9], 0.1 + b * 0.08 + rI * 0.05);
+      for (let px = -rx + rnd() * rx; px <= W + rx; px += rx * (1.55 + rnd() * 0.3)) {
+        const py = yAt(px) + off, r1 = rx * (0.85 + rnd() * 0.3);
+        const mg = x.createLinearGradient(0, py - ry, 0, py + ry);
+        mg.addColorStop(0, rgb(lighten(rc, 0.42))); mg.addColorStop(0.55, rgb(rc)); mg.addColorStop(1, rgb(mix(rc, [0.5, 0.42, 0.72], 0.3)));
+        x.fillStyle = mg; x.beginPath(); x.ellipse(px, py, r1, ry, 0, 0, 6.283); x.fill();
+        // blossoms that melt into bokeh once blurred
+        if (rnd() < 0.35 + b * 0.1) {
+          const pc = [[1, 0.78, 0.86], [1, 0.97, 0.98], [1, 0.86, 0.74], [0.84, 0.9, 1]][rnd() * 4 | 0];
+          for (let q = 0; q < 3; q++) { x.fillStyle = rgb(pc, 0.9); x.beginPath(); x.arc(px + (rnd() - 0.5) * r1, py - ry * (0.3 + rnd() * 0.5), rx * (0.08 + rnd() * 0.08), 0, 6.283); x.fill(); }
+        }
+      }
+    }
+    x.strokeStyle = 'rgba(255,250,255,.35)'; x.lineWidth = H * 0.004;
+    x.beginPath(); for (let px = 0; px <= W + 10; px += 10) { const y = yAt(px) + 1; px ? x.lineTo(px, y) : x.moveTo(px, y); } x.stroke();
+  }
+  // round mint bushes on the sides
+  for (const side of [0, 1]) for (let i = 0; i < 5; i++) {
+    const bx = side ? W * (0.84 + rnd() * 0.2) : W * (-0.04 + rnd() * 0.2), br = H * (0.05 + rnd() * 0.05), by = H * (0.86 + rnd() * 0.08);
+    const c = mix([0.7, 0.88, 0.8], P.c3, 0.15 + rnd() * 0.15);
+    for (let q = 0; q < 5; q++) {
+      const qx = bx + (q - 2) * br * 0.45, qy = by - Math.sin(q / 4 * Math.PI) * br * 0.35, qr = br * (0.5 + Math.sin(q / 4 * Math.PI) * 0.25);
+      const bg = x.createLinearGradient(0, qy - qr, 0, qy + qr);
+      bg.addColorStop(0, rgb(lighten(c, 0.45))); bg.addColorStop(0.6, rgb(c)); bg.addColorStop(1, rgb(mix(c, [0.5, 0.62, 0.66], 0.3)));
+      x.fillStyle = bg; x.beginPath(); x.arc(qx, qy, qr, 0, 6.283); x.fill();
+    }
+    for (let k = 0; k < 4; k++) { // hydrangea pompoms
+      const a = -Math.PI * (0.15 + rnd() * 0.7), d = br * (0.35 + rnd() * 0.4);
+      const px = bx + Math.cos(a) * d * 1.4, py = by + Math.sin(a) * d * 0.8, pr = br * (0.16 + rnd() * 0.1);
+      const pc = [[1, 0.8, 0.88], [0.86, 0.82, 1], [1, 0.94, 0.96], [0.8, 0.88, 1]][rnd() * 4 | 0];
+      for (let q = 0; q < 14; q++) {
+        const qa = rnd() * 6.28, qd = Math.sqrt(rnd()) * pr;
+        const qx = px + Math.cos(qa) * qd, qy = py + Math.sin(qa) * qd;
+        x.fillStyle = rgb(mix(pc, [1, 1, 1], rnd() * 0.5), 0.95);
+        x.beginPath(); for (let pp = 0; pp < 4; pp++) { const pa = pp * 1.5708 + qa; x.moveTo(qx, qy); x.arc(qx + Math.cos(pa) * pr * 0.12, qy + Math.sin(pa) * pr * 0.12, pr * 0.13, 0, 6.283); } x.fill();
+      }
+    }
+  }
+  // soft focus: the garden sits behind the bubbles' focal plane
+  const sharp = gardenCan; gardenCan = mk(W * DPR, H * DPR);
+  const gx = gardenCan.getContext('2d');
+  gx.filter = `blur(${Math.max(2, H * 0.007 * DPR)}px)`; gx.drawImage(sharp, 0, 0);
+    // stalk sprites
+  stalkCans = [];
+  for (let i = 0; i < 3; i++) stalkCans.push(makeStalk(H * 0.24, mix(P.c3, [0.58, 0.44, 0.86], 0.3 + i * 0.25)));
+  stalks.length = 0;
+  for (let i = 0; i < 48; i++) {
+    const side = rnd();
+    const sx = side < 0.5 ? rnd() * W * 0.38 : W - rnd() * W * 0.38;
+    stalks.push({ x: sx, y: H * (0.95 + rnd() * 0.08), s: 0.5 + rnd() * 0.6, ph: rnd() * 6.28, spr: stalkCans[i % 3], lean: (rnd() - 0.5) * 0.3 });
+  }
+  stalks.sort((a, b) => a.y - b.y);
+}
+
+// ---------- bubble GL ----------
+const VS = `attribute vec2 aQ; attribute vec4 aB; attribute vec3 aE;
+uniform vec2 R;
+varying vec2 vQ; varying vec4 vB; varying vec3 vE;
+void main(){
+  float s = aB.z * (1.0 + aE.y * 0.25) * 1.08;
+  vec2 p = aB.xy + aQ * s;
+  vQ = aQ * 1.08; vB = aB; vE = aE;
+  gl_Position = vec4(p / R * 2.0 - 1.0, 0.0, 1.0);
+  gl_Position.y = -gl_Position.y;
+}`;
+const FS = `precision mediump float;
+varying vec2 vQ; varying vec4 vB; varying vec3 vE;
+uniform float T;
+float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float n(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+  return mix(mix(h(i),h(i+vec2(1.,0.)),f.x),mix(h(i+vec2(0.,1.)),h(i+vec2(1.,1.)),f.x),f.y);}
+void main(){
+  float sd = vB.w, pop = vE.y, alive = vE.z;
+  // gentle wobble
+  float ang = T * 1.3 + sd * 6.0;
+  vec2 q = vQ;
+  float wob = 0.035 * sin(T * 2.1 + sd * 9.0);
+  q *= vec2(1.0 + wob * cos(ang), 1.0 - wob * cos(ang));
+  float d = length(q);
+  if (d > 1.0) discard;
+  float aa = smoothstep(1.0, 1.0 - 0.03, d);
+  float nz = sqrt(max(0.0, 1.0 - d * d));
+  // swirling film thickness (nm); gravity drains film toward the bottom
+  vec2 sw = q * 1.6 + vec2(sd * 7.0, T * 0.05);
+  float th = 300.0 + 420.0 * n(sw + vec2(n(sw * 1.7 + T * 0.12), n(sw * 1.3 - T * 0.1)) * 1.4) + 180.0 * q.y;
+  th = max(80.0, th);
+  float c = 2.0 * 1.33 * th * mix(0.8, 1.0, nz);
+  vec3 lam = vec3(650.0, 540.0, 450.0);
+  vec3 film = 0.5 - 0.5 * cos(6.2831 * c / lam);
+  film = mix(film, vec3(1.0), 0.38);
+  film = mix(film, film * vec3(1.0, 0.92, 1.05), 0.5);
+  float fres = pow(1.0 - nz, 2.4);
+  float a = mix(0.05, 0.62, fres);
+  vec3 col = film;
+  // window highlight upper-left + small dot lower-right
+  vec2 hp = (q - vec2(-0.38, -0.42)) * vec2(1.0, 1.4);
+  float hi = smoothstep(0.26, 0.12, length(hp)) * 0.9;
+  hi += smoothstep(0.1, 0.03, length(q - vec2(0.42, 0.45))) * 0.6;
+  float rim = smoothstep(0.86, 0.97, d) * 0.35;
+  col = col * a + vec3(1.0) * (hi + rim * 0.5);
+  float A = a + hi + rim * 0.3;
+  // popping: thin ring expands and fades
+  float pf = 1.0 - pop;
+  col *= pf; A *= pf;
+  A = min(A, 0.95) * aa * alive;
+  col *= aa * alive;
+  gl_FragColor = vec4(col, A);
+}`;
+let prog = null, buf = null, uR, uT;
+const NB = 22;
+const VERT = new Float32Array(NB * 6 * 9);
+const QUAD = [-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1];
+function sh(type, src) { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s)); return s; }
+if (gl) {
+  prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(prog); gl.useProgram(prog);
+  buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, VERT.byteLength, gl.DYNAMIC_DRAW);
+  const aQ = gl.getAttribLocation(prog, 'aQ'), aB = gl.getAttribLocation(prog, 'aB'), aE = gl.getAttribLocation(prog, 'aE');
+  gl.enableVertexAttribArray(aQ); gl.vertexAttribPointer(aQ, 2, gl.FLOAT, false, 36, 0);
+  gl.enableVertexAttribArray(aB); gl.vertexAttribPointer(aB, 4, gl.FLOAT, false, 36, 8);
+  gl.enableVertexAttribArray(aE); gl.vertexAttribPointer(aE, 3, gl.FLOAT, false, 36, 24);
+  uR = gl.getUniformLocation(prog, 'R'); uT = gl.getUniformLocation(prog, 'T');
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+  gl.clearColor(0, 0, 0, 0);
+}
+
+// ---------- bubbles ----------
+const bubbles = [];
+for (let i = 0; i < NB; i++) bubbles.push({ x: 0, y: 0, r: 40, vx: 0, vy: 0, sd: Math.random(), pop: 0, popping: false, alive: 0, life: 0, max: 30, wait: 0 });
+function spawn(b, initial) {
+  b.r = (26 + Math.pow(Math.random(), 1.6) * 90) * Math.max(0.6, U);
+  b.x = W * (0.05 + Math.random() * 0.9);
+  b.y = initial ? H * (0.1 + Math.random() * 0.9) : H + b.r + Math.random() * H * 0.1;
+  b.vx = (Math.random() - 0.5) * 10; b.vy = -(14 + Math.random() * 18) * U;
+  b.sd = Math.random(); b.pop = 0; b.popping = false; b.alive = initial ? 1 : 0; b.life = 0; b.max = 20 + Math.random() * 30; b.wait = 0;
+}
+function blowAt(x, y, n) {
+  let k = 0;
+  for (const b of bubbles) {
+    if (k >= n) break;
+    if (b.wait > 0 || (b.popping)) { // reuse a recycled slot
+      spawn(b, false); b.x = x + (Math.random() - 0.5) * 40 * U; b.y = y + (Math.random() - 0.5) * 30 * U;
+      b.r = (18 + Math.random() * 34) * Math.max(0.6, U); b.alive = 0; b.vy = -(30 + Math.random() * 40) * U; b.vx = (Math.random() - 0.5) * 60 * U; k++;
+    }
+  }
+}
+
+// ---------- sparkles ----------
+const sparks = [];
+const NS = 220;
+for (let i = 0; i < NS; i++) sparks.push({ on: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1, s: 1, c: 0, star: false, ph: 0 });
+const SPC = [[1, 0.85, 0.92], [0.85, 0.85, 1], [0.82, 1, 0.94], [1, 0.97, 0.82], [0.84, 0.94, 1]];
+let sparkCans2 = [];
+function makeSparkle(sz, col) {
+  const c = mk(sz, sz), x = c.getContext('2d'), m = sz / 2;
+  const g = x.createRadialGradient(m, m, 0, m, m, m);
+  g.addColorStop(0, rgb(col, 0.7)); g.addColorStop(0.3, rgb(col, 0.2)); g.addColorStop(1, rgb(col, 0));
+  x.fillStyle = g; x.fillRect(0, 0, sz, sz);
+  x.fillStyle = '#fff';
+  const r = m * 0.9, w = m * 0.12;
+  x.beginPath(); x.moveTo(m, m - r); x.quadraticCurveTo(m + w, m - w, m + r, m); x.quadraticCurveTo(m + w, m + w, m, m + r);
+  x.quadraticCurveTo(m - w, m + w, m - r, m); x.quadraticCurveTo(m - w, m - w, m, m - r); x.fill();
+  return c;
+}
+function makeDot(sz, col) {
+  const c = mk(sz, sz), x = c.getContext('2d'), m = sz / 2;
+  const g = x.createRadialGradient(m, m, 0, m, m, m);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.35, rgb(col, 0.8)); g.addColorStop(1, rgb(col, 0));
+  x.fillStyle = g; x.fillRect(0, 0, sz, sz); return c;
+}
+const dotCans = [];
+function burst(b) {
+  let k = 0;
+  const n = 18 + (b.r / U / 8 | 0);
+  for (const s of sparks) {
+    if (s.on) continue; if (k++ >= n) break;
+    const a = Math.random() * 6.283, sp = (0.6 + Math.random() * 0.9) * b.r * 2.2;
+    s.on = true; s.x = b.x + Math.cos(a) * b.r * 0.9; s.y = b.y + Math.sin(a) * b.r * 0.9;
+    s.vx = Math.cos(a) * sp; s.vy = Math.sin(a) * sp; s.life = 0; s.max = 0.7 + Math.random() * 0.8;
+    s.star = Math.random() < 0.35; s.c = Math.random() * 5 | 0; s.s = (s.star ? 10 + Math.random() * 10 : 4 + Math.random() * 5) * Math.max(0.7, U); s.ph = Math.random() * 6;
+  }
+}
+function popB(b) { if (b.popping || b.alive < 0.5) return; b.popping = true; b.pop = 0; burst(b); }
+
+function build() {
+  U = Math.min(W, H * 1.6) / 1600;
+  makeGarden();
+  sparkCans2 = SPC.map(c => makeSparkle(64, c));
+  dotCans.length = 0; for (const c of SPC) dotCans.push(makeDot(24, c));
+  dirty = false;
+}
+let first = true;
+function resize() {
+  DPR = Math.min(1.5, window.devicePixelRatio || 1);
+  W = innerWidth; H = innerHeight;
+  for (const c of [bgC, fxC, glC]) { c.width = Math.round(W * DPR); c.height = Math.round(H * DPR); }
+  if (gl) gl.viewport(0, 0, glC.width, glC.height);
+  build();
+  if (first) { for (const b of bubbles) spawn(b, true); first = false; }
+}
+addEventListener('resize', () => { clearTimeout(resize.t); resize.t = setTimeout(resize, 120); });
+
+// ---------- input ----------
+const M = { x: -1e4, y: -1e4, last: -1e9 };
+addEventListener('mousemove', e => { M.x = e.clientX; M.y = e.clientY; M.last = performance.now(); });
+addEventListener('mousedown', e => {
+  let best = null, bd = 1e9;
+  for (const b of bubbles) {
+    if (b.popping || b.alive < 0.5) continue;
+    const d = Math.hypot(b.x - e.clientX, b.y - e.clientY) - b.r;
+    if (d < bd) { bd = d; best = b; }
+  }
+  if (best && bd < 60 * Math.max(0.7, U)) popB(best);
+  else blowAt(e.clientX, e.clientY, 3);
+});
+
+// ---------- loop ----------
+let last = performance.now(), now = 0;
+function frame(t) {
+  requestAnimationFrame(frame);
+  if (document.hidden) { last = t; return; }
+  const rdt = Math.min(0.05, (t - last) / 1000); last = t;
+  if (dirty) build();
+  const k = P.speed * motion, dt = rdt * k; now += dt;
+  const wind = Math.sin(now * 0.23) * 0.6 + Math.sin(now * 0.07 + 1.3) * 0.4;
+  const hasM = M.x > -1e3 && performance.now() - M.last < 8000;
+
+  // garden + swaying lavender
+  bctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  bctx.drawImage(gardenCan, 0, 0, W, H);
+  for (const s of stalks) {
+    let a = s.lean + Math.sin(now * 1.1 + s.ph + s.x * 0.003) * 0.06 + wind * 0.07;
+    const sw = s.spr.width / DPR * s.s, shh = s.spr.height / DPR * s.s;
+    bctx.setTransform(DPR * Math.cos(a), DPR * Math.sin(a), -DPR * Math.sin(a), DPR * Math.cos(a), s.x * DPR, s.y * DPR);
+    bctx.drawImage(s.spr, -sw / 2, -shh, sw, shh);
+  }
+
+  // bubble physics
+  for (let i = 0; i < NB; i++) {
+    const b = bubbles[i];
+    if (b.wait > 0) { b.wait -= dt; if (b.wait <= 0) spawn(b, false); continue; }
+    if (b.popping) { b.pop += dt * 4.5; if (b.pop >= 1) { b.wait = 0.5 + Math.random() * 2.5; b.alive = 0; } continue; }
+    b.alive = Math.min(1, b.alive + dt * 1.2);
+    b.life += dt;
+    b.vx += (wind * 14 * U - b.vx * 0.4) * dt + Math.sin(now * 0.8 + b.sd * 20) * 6 * U * dt;
+    b.vy += (-(16 + b.sd * 14) * U - b.vy) * 0.4 * dt;
+    if (hasM) {
+      const dx = b.x - M.x, dy = b.y - M.y, d = Math.hypot(dx, dy) || 1, R = b.r + 170 * U;
+      if (d < R) { const f = (1 - d / R) * 320 * U * dt; b.vx += dx / d * f; b.vy += dy / d * f; }
+    }
+    for (let j = i + 1; j < NB; j++) {
+      const o = bubbles[j]; if (o.wait > 0 || o.popping) continue;
+      const dx = b.x - o.x, dy = b.y - o.y, d = Math.hypot(dx, dy) || 1, R = (b.r + o.r) * 1.02;
+      if (d < R) { const f = (R - d) / R * 60 * U * dt; b.vx += dx / d * f; b.vy += dy / d * f; o.vx -= dx / d * f; o.vy -= dy / d * f; }
+    }
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    if (b.x < -b.r * 2 || b.x > W + b.r * 2 || b.y < -b.r * 2) { b.wait = Math.random() * 2; b.alive = 0; }
+    else if (b.life > b.max && b.y < H * 0.85) popB(b);
+  }
+
+  // draw bubbles
+  if (gl) {
+    let o = 0, cnt = 0;
+    for (const b of bubbles) {
+      if (b.wait > 0) continue;
+      for (let v = 0; v < 6; v++) {
+        VERT[o++] = QUAD[v * 2]; VERT[o++] = QUAD[v * 2 + 1];
+        VERT[o++] = b.x; VERT[o++] = b.y; VERT[o++] = b.r; VERT[o++] = b.sd;
+        VERT[o++] = 0; VERT[o++] = b.popping ? b.pop : 0; VERT[o++] = b.alive;
+      }
+      cnt++;
+    }
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    if (cnt) {
+      gl.uniform2f(uR, W, H); gl.uniform1f(uT, now);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, VERT);
+      gl.drawArrays(gl.TRIANGLES, 0, cnt * 6);
+    }
+  }
+
+  // sparkles
+  fctx.setTransform(1, 0, 0, 1, 0, 0);
+  fctx.clearRect(0, 0, fxC.width, fxC.height);
+  fctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  fctx.globalCompositeOperation = 'lighter';
+  for (const s of sparks) {
+    if (!s.on) continue;
+    s.life += dt; if (s.life > s.max) { s.on = false; continue; }
+    const dr = Math.pow(0.02, dt); s.vx *= dr; s.vy = s.vy * dr + 30 * U * dt;
+    s.x += s.vx * dt; s.y += s.vy * dt;
+    const lt = s.life / s.max, a = (1 - lt) * (1 - lt);
+    fctx.globalAlpha = a;
+    const sz = s.s * (s.star ? 0.7 + 0.5 * Math.sin(s.life * 14 + s.ph) : 1) * (1 - lt * 0.4);
+    fctx.drawImage(s.star ? sparkCans2[s.c] : dotCans[s.c], s.x - sz, s.y - sz, sz * 2, sz * 2);
+  }
+  fctx.globalAlpha = 1; fctx.globalCompositeOperation = 'source-over';
+}
+resize();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

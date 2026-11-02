@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Aurora Lake</title>
+<!--
+  Aurora Lake - MacWallpaperPro community wallpaper (nature)
+  Single-pass WebGL: layered aurora curtains with ray striations, star field and
+  a faint galactic band, pine silhouettes and a mirror-still lake reflecting it all.
+  Cursor: moving it drops ripples into the reflection (pointing at the sky ripples its
+  mirrored spot). Click: a larger ring ripple and a brief aurora flare.
+  window.setP({c1: aurora base, c2: aurora crown, c3: night sky, speed})
+-->
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#020812 linear-gradient(#020610,#06202a 55%,#020810 58%,#01040a)}
+  canvas{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(() => {
+'use strict';
+const P = { c1:[0.22,1.0,0.62], c2:[0.62,0.30,1.0], c3:[0.008,0.022,0.05], speed:1 };
+window.setP = o => { if(!o) return; for (const k of ['c1','c2','c3']) if (Array.isArray(o[k]) && o[k].length>=3) P[k]=o[k].slice(0,3); if (typeof o.speed==='number' && isFinite(o.speed)) P.speed=Math.max(0,Math.min(4,o.speed)); };
+const RM = matchMedia('(prefers-reduced-motion: reduce)');
+const cv = document.getElementById('c');
+const gl = cv.getContext('webgl', { antialias:false, alpha:false, depth:false, stencil:false, powerPreference:'low-power' });
+if (!gl) return;
+const NR=10;
+const VS=`attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}`;
+const FS=`precision highp float;
+uniform vec2 R; uniform float T; uniform vec2 M; uniform float FL;
+uniform vec3 C1,C2,C3; uniform vec4 RP[${NR}];
+#define HY -.16
+float hs(float n){return fract(sin(n)*43758.5453123);}
+float h2(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+float n1(float x){float i=floor(x),f=fract(x);f=f*f*(3.-2.*f);return mix(hs(i),hs(i+1.),f);}
+float f1(float x){return .5*n1(x)+.25*n1(x*2.1+3.)+.125*n1(x*4.3+7.)+.0625*n1(x*8.7+1.);}
+float ns(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+  return mix(mix(h2(i),h2(i+vec2(1,0)),f.x),mix(h2(i+vec2(0,1)),h2(i+vec2(1,1)),f.x),f.y);}
+float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<4;i++){v+=a*ns(p);p=p*2.03+vec2(17.1,9.2);a*=.5;}return v;}
+float abase(float x,float fi,float t){
+  return -.02+fi*.07+.22*f1(x*.42+t+fi*5.)-.11*f1(x*1.3-t*1.3+fi)+.09*x*(fi==1.?-1.:1.)+.03*sin(x*1.7+T*.07+fi);
+}
+vec3 aurora(vec2 p){
+  vec3 acc=vec3(0.);
+  for(int i=0;i<3;i++){
+    float fi=float(i);
+    float x=p.x*(1.+fi*.2)+fi*2.3+M.x*.02*(1.+fi*.3);
+    float t=T*(.03+fi*.007);
+    float base=abase(x,fi,t);
+    float h=p.y-base;
+    if(h<-.04) continue;
+    float slope=(abase(x+.01,fi,t)-base)/.01;
+    float fold=1.+1.6*smoothstep(.15,.9,abs(slope));
+    float wob=f1(x*2.2+T*.05+fi*2.);
+    float r1=n1(x*40.+wob*7.+T*.25*(1.+fi*.2)), r2=n1(x*13.-wob*3.-T*.12);
+    float rays=.2+.8*(r1*r1*.6+r2*.4);
+    float k=mix(4.2,7.,fi/2.);
+    float body=exp(-max(h,0.)*k)*smoothstep(-.04,.01,h);
+    float edge=exp(-max(h,0.)*38.)*smoothstep(-.035,.0,h);
+    float env=.25+.75*smoothstep(.2,.7,f1(x*.3+T*.012+fi*9.));
+    vec3 c=mix(mix(C1,vec3(.75,1.,.85),edge*.4),C2,smoothstep(.06,.38,h));
+    acc+=c*(body*rays*1.15+edge*1.3*(.5+.5*rays))*env*fold*(.85/(1.+fi*.5));
+    acc+=mix(C1,C2,.3)*exp(-max(h,0.)*1.6)*smoothstep(-.1,.05,h)*.05*env;
+  }
+  return acc*(1.+FL);
+}
+vec3 sky(vec2 p,float refl){
+  float AR=R.x/R.y;
+  vec3 col=mix(C3*2.6+vec3(0.,.02,.02),C3,smoothstep(HY,.5,p.y));
+  // stars
+  vec2 g=p*160.; vec2 gi=floor(g); vec2 gf=fract(g)-.5;
+  float s=h2(gi); vec2 off=vec2(h2(gi+3.1),h2(gi+7.7))-.5;
+  float sz=mix(.05,.13,h2(gi+1.9));
+  float star=smoothstep(sz,0.,length(gf-off*.6))*step(.93,s);
+  float tw=.6+.4*sin(T*(1.5+s*3.)+s*90.);
+  vec2 g2=p*60.; vec2 gi2=floor(g2);
+  float s2=h2(gi2+5.); float bstar=smoothstep(.12,0.,length(fract(g2)-.5-(vec2(h2(gi2+1.),h2(gi2+2.))-.5)*.6))*step(.985,s2);
+  // galactic band
+  float band=exp(-pow((p.y-.25+p.x*.35)/.12,2.));
+  float mw=fbm(p*vec2(5.,9.)+3.)*band;
+  col+=vec3(.5,.55,.7)*mw*mw*.12;
+  float sv=smoothstep(HY,HY+.08,p.y);
+  col+=vec3(.85,.9,1.)*(star*tw*(.5+.5*band)+bstar*1.4)*sv*refl;
+  col+=aurora(p);
+  col+=C1*.06*exp(-(p.y-HY)*7.);
+  return col;
+}
+float pine(float x,float y,float cx,float w,float hgt,float base){
+  float t=(y-base)/hgt; if(t<0.||t>1.) return step(y,base)*step(abs(x-cx),w*.08);
+  float tiers=fract(t*(6.+hs(cx*9.)*4.)+hs(cx)*.5);
+  float ww=w*(1.-t)*(.5+.5*(1.-tiers))*(.85+.3*n1(y*90.+cx*20.))+w*.02;
+  return smoothstep(ww+.0015,ww-.0015,abs(x-cx));
+}
+float trees(vec2 p){
+  // far treeline along the shore
+  float x=p.x+M.x*.01; float y=p.y;
+  float m=0.;
+  float ridgeH=HY+.012+.012*f1(x*1.3+4.)+.006*f1(x*6.);
+  float k=95.; float cx=floor(x*k); float tt=1.-abs(fract(x*k)-.5)*2.; float hh=hs(cx*3.1);
+  float tl=ridgeH+pow(tt,1.4)*(.006+.022*hh)*(.4+.6*f1(x*2.));
+  m=smoothstep(tl+.0015,tl-.0015,y);
+  // near pines at the sides
+  float xn=p.x+M.x*.03;
+  for(int i=0;i<9;i++){
+    float fi=float(i); float side=i<5?-1.:1.;
+    float AR=R.x/R.y;
+    float cx2=side*(AR*.5-.02-hs(fi*7.3)*.32)+(hs(fi*1.7)-.5)*.04;
+    float hgt=mix(.18,.48,hs(fi*5.1))*(1.-.45*smoothstep(.3,.0,abs(cx2)));
+    float w=hgt*.24;
+    m=max(m,pine(xn,y,cx2,w,hgt,HY-.002));
+  }
+  return m;
+}
+void main(){
+  vec2 fc=gl_FragCoord.xy; vec2 p=(fc-.5*R)/R.y;
+  vec3 col;
+  float hy=HY;
+  if(p.y>=hy){
+    col=sky(p,1.);
+    // distant hills
+    float hill=hy+.025+.035*f1(p.x*1.1+M.x*.005)+.012*f1(p.x*4.);
+    col=mix(col,C3*1.1+C1*.02,smoothstep(hill+.002,hill-.002,p.y)*.95);
+    float tr=trees(p);
+    col=mix(col,C3*.35,tr);
+  } else {
+    float dy=hy-p.y; float camH=.12; float z=camH/dy;
+    vec2 w=vec2(p.x*z,z);
+    // ambient ripples
+    vec2 d=vec2(0.);
+    d.y+=(n1(w.y*6.-T*.6)-.5)*.004+ (ns(w*vec2(3.,8.)+T*.15)-.5)*.004;
+    d.x+=(ns(w*vec2(2.,5.)-T*.1)-.5)*.003;
+    for(int i=0;i<${NR};i++){
+      vec4 r=RP[i]; if(r.w<=0.)continue;
+      float age=T-r.z; vec2 dd=w-r.xy; float l=length(dd)+1e-4;
+      float front=age*.45; float e=exp(-pow((l-front)/.12,2.))*exp(-age*.55)*r.w;
+      float wave=sin((l-front)*38.)*e;
+      d+=dd/l*wave*.034/(1.+z*.35);
+    }
+    vec2 rp=vec2(p.x,2.*hy-p.y)+d*vec2(1.,1.);
+    rp.y=max(rp.y,hy+.0005);
+    col=sky(rp,.7);
+    float hill=hy+.025+.035*f1(rp.x*1.1+M.x*.005)+.012*f1(rp.x*4.);
+    col=mix(col,C3*1.1+C1*.02,smoothstep(hill+.004,hill-.004,rp.y)*.95);
+    col=mix(col,C3*.35,trees(rp));
+    float fres=mix(.5,.95,exp(-dy*6.));
+    col=mix(C3*.5,col,fres);
+    // shoreline glint
+    col+=C1*.03*exp(-dy*120.);
+  }
+  vec2 uv=fc/R;
+  col*=mix(.65,1.,smoothstep(1.3,.35,length((uv-.5)*vec2(1.1,1.))));
+  col=1.-exp(-col*1.8);
+  col=pow(col,vec3(.95));
+  col+=(h2(fc+fract(T))-.5)/255.;
+  gl_FragColor=vec4(col,1.);
+}`;
+function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(o));return o;}
+const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,VS));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,FS));gl.linkProgram(pr);
+if(!gl.getProgramParameter(pr,gl.LINK_STATUS))console.error(gl.getProgramInfoLog(pr));
+gl.useProgram(pr);
+const qb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,qb);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+const aL=gl.getAttribLocation(pr,'a');gl.enableVertexAttribArray(aL);gl.vertexAttribPointer(aL,2,gl.FLOAT,false,0,0);
+const U=n=>gl.getUniformLocation(pr,n);
+const uR=U('R'),uT=U('T'),uM=U('M'),uFL=U('FL'),uC1=U('C1'),uC2=U('C2'),uC3=U('C3'),uRP=U('RP');
+const rp=new Float32Array(NR*4);let ri=0;
+let W=innerWidth,H=innerHeight;
+const HY=-.16,CAMH=.12;
+function resize(){W=innerWidth;H=innerHeight;const dpr=Math.min(devicePixelRatio||1,1.5);let w=W*dpr,h=H*dpr;const s=Math.min(1,Math.sqrt(2.4e6/(w*h)));cv.width=Math.max(1,w*s|0);cv.height=Math.max(1,h*s|0);gl.viewport(0,0,cv.width,cv.height);}
+addEventListener('resize',resize);resize();
+let T=0,last=performance.now(),now=0,flare=0;
+function ripple(cx,cy,amp){
+  let px=(cx-W/2)/H,py=(H/2-cy)/H;
+  if(py>HY)py=2*HY-py;                      // pointing at the sky ripples its reflection
+  const dy=Math.max(.006,HY-py),z=CAMH/dy;
+  rp[ri*4]=px*z;rp[ri*4+1]=z;rp[ri*4+2]=T;rp[ri*4+3]=amp;ri=(ri+1)%NR;
+}
+const mouse={x:W/2,y:H/2,last:-1e9,px:0,py:0,lastR:0,acc:0};
+addEventListener('mousemove',e=>{
+  const d=Math.hypot(e.clientX-mouse.x,e.clientY-mouse.y);mouse.acc+=d;
+  mouse.x=e.clientX;mouse.y=e.clientY;mouse.last=now;
+  if(mouse.acc>45&&now-mouse.lastR>.12){mouse.acc=0;mouse.lastR=now;ripple(e.clientX,e.clientY,.55);}
+});
+addEventListener('mousedown',e=>{mouse.last=now;ripple(e.clientX,e.clientY,1.4);flare=Math.min(1.2,flare+.6);});
+let nextAmb=1.5;
+function frame(t){
+  requestAnimationFrame(frame);
+  if(document.hidden){last=t;return;}
+  let rdt=Math.min(.05,Math.max(0,(t-last)/1000));last=t;now=t/1000;
+  const dt=rdt*P.speed*(RM.matches?.2:1);T+=dt;
+  flare*=Math.exp(-dt*.8);
+  // idle: an occasional soft ripple, like a fish rising
+  if(T>nextAmb){nextAmb=T+5+Math.random()*7;ripple(W*(.2+.6*Math.random()),H*(.72+.22*Math.random()),.45);}
+  for(let i=0;i<NR;i++)if(rp[i*4+3]>0&&T-rp[i*4+2]>10)rp[i*4+3]=0;
+  const idle=now-mouse.last>4;
+  const tx=idle?Math.sin(T*.05)*.4:(mouse.x/W*2-1),ty=idle?0:(mouse.y/H*2-1);
+  const k=Math.min(1,rdt*1.2);mouse.px+=(tx-mouse.px)*k;mouse.py+=(ty-mouse.py)*k;
+  gl.uniform2f(uR,cv.width,cv.height);gl.uniform1f(uT,T);gl.uniform2f(uM,mouse.px,-mouse.py);gl.uniform1f(uFL,flare);
+  gl.uniform3fv(uC1,P.c1);gl.uniform3fv(uC2,P.c2);gl.uniform3fv(uC3,P.c3);gl.uniform4fv(uRP,rp);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

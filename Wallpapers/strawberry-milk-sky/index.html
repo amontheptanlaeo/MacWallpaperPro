@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Strawberry Milk Sky</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #f6c9d8; }
+  canvas, #grain { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  #grain { pointer-events: none; opacity: .05; mix-blend-mode: soft-light; background-size: 160px 160px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="grain"></div>
+<script>
+(() => {
+'use strict';
+// Params: c1 = upper sky, c2 = horizon, c3 = cloud shadow tint
+const DEF = { c1: [0.96, 0.72, 0.84], c2: [1.0, 0.86, 0.76], c3: [0.96, 0.70, 0.80], speed: 1 };
+const P = { c1: DEF.c1.slice(), c2: DEF.c2.slice(), c3: DEF.c3.slice(), speed: 1 };
+const RM = matchMedia('(prefers-reduced-motion: reduce)');
+let motion = RM.matches ? 0.2 : 1;
+RM.addEventListener && RM.addEventListener('change', e => { motion = e.matches ? 0.2 : 1; });
+let dirty = true;
+window.setP = o => {
+  if (!o) return;
+  for (const k of ['c1', 'c2', 'c3']) if (Array.isArray(o[k]) && o[k].length >= 3) { P[k] = o[k].slice(0, 3); dirty = true; }
+  if (typeof o.speed === 'number' && isFinite(o.speed)) P.speed = Math.max(0, Math.min(4, o.speed));
+};
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1, U = 1;
+const rgb = (c, a = 1, k = 1) => `rgba(${Math.min(255, c[0] * 255 * k) | 0},${Math.min(255, c[1] * 255 * k) | 0},${Math.min(255, c[2] * 255 * k) | 0},${a})`;
+const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const lighten = (c, t) => mix(c, [1, 1, 1], t);
+const mk = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(w)); c.height = Math.max(1, Math.ceil(h)); return c; };
+let seed = 7;
+const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+
+// ---------- grain overlay (static) ----------
+(() => {
+  const g = mk(160, 160), x = g.getContext('2d'), d = x.createImageData(160, 160);
+  for (let i = 0; i < d.data.length; i += 4) { const v = Math.random() * 255 | 0; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255; }
+  x.putImageData(d, 0, 0);
+  document.getElementById('grain').style.backgroundImage = `url(${g.toDataURL()})`;
+})();
+
+// ---------- sprites ----------
+let bgCan = null, moonCan = null, sparkCan = null, dotCan = null;
+const heartCans = [], starCans = [];
+const PASTELS = [[1, 0.62, 0.75], [0.78, 0.68, 1], [1, 0.80, 0.62], [0.62, 0.90, 0.80], [1, 0.92, 0.60], [0.66, 0.82, 1]];
+
+function makeSparkle(sz, col) {
+  const c = mk(sz, sz), x = c.getContext('2d'), m = sz / 2;
+  const g = x.createRadialGradient(m, m, 0, m, m, m);
+  g.addColorStop(0, rgb(col, 0.55)); g.addColorStop(0.25, rgb(col, 0.18)); g.addColorStop(1, rgb(col, 0));
+  x.fillStyle = g; x.fillRect(0, 0, sz, sz);
+  x.fillStyle = 'rgba(255,255,255,1)';
+  const r = m * 0.92, w = m * 0.13;
+  x.beginPath();
+  x.moveTo(m, m - r); x.quadraticCurveTo(m + w, m - w, m + r, m); x.quadraticCurveTo(m + w, m + w, m, m + r);
+  x.quadraticCurveTo(m - w, m + w, m - r, m); x.quadraticCurveTo(m - w, m - w, m, m - r); x.fill();
+  return c;
+}
+function heartPath(x, cx, cy, s) {
+  x.beginPath();
+  x.moveTo(cx, cy + s * 0.32);
+  x.bezierCurveTo(cx - s * 0.95, cy - s * 0.25, cx - s * 0.45, cy - s * 0.95, cx, cy - s * 0.45);
+  x.bezierCurveTo(cx + s * 0.45, cy - s * 0.95, cx + s * 0.95, cy - s * 0.25, cx, cy + s * 0.32);
+  x.closePath();
+}
+function makeHeart(sz, col) {
+  const c = mk(sz, sz), x = c.getContext('2d'), m = sz / 2, s = sz * 0.36;
+  x.shadowColor = rgb(lighten(col, 0.3), 0.9); x.shadowBlur = sz * 0.14;
+  heartPath(x, m, m + s * 0.12, s);
+  const g = x.createLinearGradient(0, m - s, 0, m + s * 0.5);
+  g.addColorStop(0, rgb(lighten(col, 0.45))); g.addColorStop(1, rgb(col));
+  x.fillStyle = g; x.fill();
+  x.shadowBlur = 0;
+  x.fillStyle = 'rgba(255,255,255,.85)';
+  x.beginPath(); x.ellipse(m - s * 0.42, m - s * 0.32, s * 0.13, s * 0.08, -0.7, 0, 6.283); x.fill();
+  return c;
+}
+function makeStar(sz, col) {
+  const c = mk(sz, sz), x = c.getContext('2d'), m = sz / 2, R = sz * 0.3, r = R * 0.5;
+  x.shadowColor = rgb(lighten(col, 0.3), 0.9); x.shadowBlur = sz * 0.14;
+  x.beginPath();
+  for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i & 1 ? r : R; x.lineTo(m + Math.cos(a) * rr, m + Math.sin(a) * rr); }
+  x.closePath();
+  const g = x.createLinearGradient(0, m - R, 0, m + R);
+  g.addColorStop(0, rgb(lighten(col, 0.5))); g.addColorStop(1, rgb(col));
+  x.fillStyle = g; x.strokeStyle = g; x.lineJoin = 'round'; x.lineWidth = sz * 0.07; x.fill(); x.stroke();
+  x.shadowBlur = 0; x.fillStyle = 'rgba(255,255,255,.8)';
+  x.beginPath(); x.arc(m - R * 0.22, m - R * 0.2, R * 0.12, 0, 6.283); x.fill();
+  return c;
+}
+
+// cloud sprite: union of shaded puffs, flat-ish soft bottom
+function makeCloud(w, depth) {
+  const h = w * 0.55, pad = w * 0.12;
+  const c = mk((w + pad * 2) * DPR, (h + pad * 2) * DPR), x = c.getContext('2d');
+  x.scale(DPR, DPR);
+  const base = h * 0.78 + pad, puffs = [];
+  const n = 4 + (rnd() * 3 | 0);
+  for (let i = 0; i < n; i++) {
+    const t = n === 1 ? 0.5 : i / (n - 1);
+    const arch = Math.sin(t * Math.PI);
+    const r = w * (0.11 + 0.13 * arch + rnd() * 0.05);
+    puffs.push({ x: pad + w * (0.12 + t * 0.76) + (rnd() - 0.5) * w * 0.05, y: base - r * (0.78 - 0.4 * arch) - arch * h * 0.2 + rnd() * h * 0.05, r });
+  }
+  // a few small back puffs on top
+  for (let i = 0; i < 1; i++) puffs.push({ x: pad + w * (0.35 + rnd() * 0.3), y: base - h * (0.5 + rnd() * 0.12), r: w * (0.12 + rnd() * 0.05) });
+  puffs.sort((a, b) => a.y - b.y);
+  const hi = [1, 0.995, 0.985], mid = lighten(mix(P.c3, P.c2, 0.35), 0.5), lo = mix(P.c3, [0.86, 0.68, 0.86], 0.35);
+  // soft outer glow
+  x.save(); x.shadowColor = rgb([1, 0.95, 0.95], 0.7); x.shadowBlur = w * 0.06;
+  x.fillStyle = rgb(mid);
+  for (const p of puffs) { x.beginPath(); x.arc(p.x, p.y, p.r, 0, 6.283); x.fill(); }
+  x.restore();
+  // shaded puffs
+  for (const p of puffs) {
+    x.save(); x.fillStyle = rgb(lo, 0.0); x.shadowColor = rgb(lo, 0.45); x.shadowBlur = p.r * 0.5; x.shadowOffsetY = -p.r * 0.04 * DPR;
+    x.beginPath(); x.arc(p.x, p.y, p.r * 0.98, 0, 6.283); x.fillStyle = rgb(mid, 1); x.fill(); x.restore();
+    const g = x.createLinearGradient(p.x + p.r * 0.3, p.y - p.r, p.x - p.r * 0.2, p.y + p.r);
+    g.addColorStop(0, rgb(hi)); g.addColorStop(0.4, rgb(mix(hi, mid, 0.12))); g.addColorStop(0.8, rgb(mix(hi, mid, 0.7))); g.addColorStop(1, rgb(mid));
+    x.fillStyle = g; x.beginPath(); x.arc(p.x, p.y, p.r, 0, 6.283); x.fill();
+  }
+  // flat, soft bottom
+  x.globalCompositeOperation = 'destination-out';
+  const cg = x.createLinearGradient(0, base - h * 0.03, 0, base + h * 0.04);
+  cg.addColorStop(0, 'rgba(0,0,0,0)'); cg.addColorStop(1, 'rgba(0,0,0,1)');
+  x.fillStyle = cg; x.fillRect(0, base - h * 0.03, w + pad * 2, h + pad);
+  x.globalCompositeOperation = 'source-over';
+  // bottom shadow tint on whole shape
+  x.globalCompositeOperation = 'source-atop';
+  const sg = x.createLinearGradient(0, base - h * 0.55, 0, base + h * 0.15);
+  sg.addColorStop(0, rgb(lo, 0)); sg.addColorStop(1, rgb(lo, 0.7));
+  x.fillStyle = sg; x.fillRect(0, 0, w + pad * 2, h + pad * 2);
+  // warm rim from the moon (upper-right)
+  const rg = x.createLinearGradient(pad + w, pad, pad, base);
+  rg.addColorStop(0, 'rgba(255,246,225,.45)'); rg.addColorStop(0.5, 'rgba(255,246,225,0)');
+  x.fillStyle = rg; x.fillRect(0, 0, w + pad * 2, h + pad * 2);
+  // atmospheric fade for far clouds
+  if (depth > 0) { x.fillStyle = rgb(mix(P.c1, P.c2, 0.6), depth * 0.5); x.fillRect(0, 0, w + pad * 2, h + pad * 2); }
+  x.globalCompositeOperation = 'source-over';
+  const o = mk(c.width, c.height), ox = o.getContext('2d');
+  ox.filter = `blur(${Math.max(0.6, w * 0.0035 * DPR * (1 + depth))}px)`; ox.drawImage(c, 0, 0);
+  return { can: o, w: w + pad * 2, h: h + pad * 2 };
+}
+
+function makeMoon(R) {
+  const S = R * 6, c = mk(S * DPR, S * DPR), x = c.getContext('2d'); x.scale(DPR, DPR);
+  const m = S / 2;
+  const g = x.createRadialGradient(m, m, R * 0.6, m, m, S / 2);
+  g.addColorStop(0, 'rgba(255,248,232,.55)'); g.addColorStop(0.25, 'rgba(255,236,222,.22)'); g.addColorStop(1, 'rgba(255,230,230,0)');
+  x.fillStyle = g; x.fillRect(0, 0, S, S);
+  // crescent on its own layer
+  const k = mk(S * DPR, S * DPR), y = k.getContext('2d'); y.scale(DPR, DPR);
+  const mg = y.createRadialGradient(m + R * 0.3, m - R * 0.3, R * 0.1, m, m, R);
+  mg.addColorStop(0, '#fffdf4'); mg.addColorStop(0.7, '#fff3d9'); mg.addColorStop(1, '#ffe6c8');
+  y.fillStyle = mg; y.beginPath(); y.arc(m, m, R, 0, 6.283); y.fill();
+  y.globalCompositeOperation = 'destination-out';
+  y.beginPath(); y.arc(m - R * 0.6, m - R * 0.3, R * 0.8, 0, 6.283); y.fill();
+  y.globalCompositeOperation = 'source-atop';
+  // sleepy face on the thick part
+  y.strokeStyle = 'rgba(196,128,140,.75)'; y.lineWidth = R * 0.045; y.lineCap = 'round';
+  y.beginPath(); y.arc(m + R * 0.55, m + R * 0.05, R * 0.09, 0.15 * Math.PI, 0.85 * Math.PI); y.stroke();
+  y.fillStyle = 'rgba(255,160,180,.45)';
+  y.beginPath(); y.ellipse(m + R * 0.55, m + R * 0.27, R * 0.11, R * 0.065, 0, 0, 6.283); y.fill();
+  y.strokeStyle = 'rgba(196,128,140,.6)'; y.lineWidth = R * 0.035;
+  y.beginPath(); y.arc(m + R * 0.36, m + R * 0.36, R * 0.05, 0.1 * Math.PI, 0.9 * Math.PI); y.stroke();
+  x.shadowColor = 'rgba(255,240,215,.9)'; x.shadowBlur = R * 0.35;
+  x.drawImage(k, 0, 0, S, S);
+  x.shadowBlur = 0;
+  x.drawImage(k, 0, 0, S, S);
+  return { can: c, S };
+}
+
+function makeBG() {
+  bgCan = mk(W * DPR, H * DPR);
+  const x = bgCan.getContext('2d'); x.scale(DPR, DPR);
+  const g = x.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, rgb(mix(P.c1, [0.82, 0.70, 0.95], 0.35)));
+  g.addColorStop(0.45, rgb(P.c1));
+  g.addColorStop(0.8, rgb(mix(P.c1, P.c2, 0.75)));
+  g.addColorStop(1, rgb(lighten(P.c2, 0.3)));
+  x.fillStyle = g; x.fillRect(0, 0, W, H);
+  // soft peach haze bottom-left, lavender top-left
+  let r = x.createRadialGradient(W * 0.15, H * 0.95, 0, W * 0.15, H * 0.95, H * 0.9);
+  r.addColorStop(0, rgb(lighten(P.c2, 0.4), 0.55)); r.addColorStop(1, rgb(P.c2, 0));
+  x.fillStyle = r; x.fillRect(0, 0, W, H);
+  r = x.createRadialGradient(W * 0.05, 0, 0, W * 0.05, 0, H * 0.8);
+  r.addColorStop(0, 'rgba(206,186,250,.35)'); r.addColorStop(1, 'rgba(206,186,250,0)');
+  x.fillStyle = r; x.fillRect(0, 0, W, H);
+}
+
+// ---------- scene ----------
+const clouds = [], sparks = [], parts = [];
+const MAXP = 260;
+for (let i = 0; i < MAXP; i++) parts.push({ on: false, x: 0, y: 0, vx: 0, vy: 0, r: 0, vr: 0, s: 1, life: 0, max: 1, spr: null });
+let moonR = 60, moon = null;
+
+function build() {
+  seed = 11;
+  U = Math.min(W, H * 1.6) / 1600;
+  makeBG();
+  moonR = Math.max(40, H * 0.1);
+  moon = makeMoon(moonR);
+  sparkCan = makeSparkle(64, [1, 0.95, 0.85]);
+  dotCan = (() => { const c = mk(16, 16), x = c.getContext('2d'), g = x.createRadialGradient(8, 8, 0, 8, 8, 8); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 16, 16); return c; })();
+  heartCans.length = 0; starCans.length = 0;
+  for (const c of PASTELS) { heartCans.push(makeHeart(72, c)); starCans.push(makeStar(72, c)); }
+  clouds.length = 0;
+  // layers: depth 1 = far (small, slow), 0 = near (big, bottom)
+  const spec = [
+    { n: 5, d: 0.8, wMin: 0.14, wMax: 0.2, yMin: 0.52, yMax: 0.66, sp: 3 },
+    { n: 4, d: 0.55, wMin: 0.18, wMax: 0.26, yMin: 0.60, yMax: 0.74, sp: 5 },
+    { n: 3, d: 0.6, wMin: 0.09, wMax: 0.13, yMin: 0.14, yMax: 0.3, sp: 4 },
+    { n: 4, d: 0.25, wMin: 0.26, wMax: 0.34, yMin: 0.72, yMax: 0.84, sp: 8 },
+    { n: 4, d: 0, wMin: 0.34, wMax: 0.44, yMin: 0.86, yMax: 0.98, sp: 12 },
+  ];
+  for (const s of spec) {
+    for (let i = 0; i < s.n; i++) {
+      const w = W * (s.wMin + rnd() * (s.wMax - s.wMin));
+      const spr = makeCloud(w, s.d);
+      let y = H * (s.yMin + rnd() * (s.yMax - s.yMin));
+      let x0 = (i + rnd() * 0.6) / s.n * (W + spr.w) - spr.w * 0.5;
+      // keep upper clouds away from the clock zone (center)
+      if (s.yMax < 0.4) { x0 = i === 0 ? W * 0.05 : i === 1 ? W * 0.62 : W * 0.3; y = H * (i === 0 ? 0.3 : i === 1 ? 0.36 : 0.44); }
+      clouds.push({ spr, x: x0, y, d: s.d, sp: s.sp * U * (0.8 + rnd() * 0.4), ph: rnd() * 6.28, sc: 1, vs: 0, ox: 0, oy: 0, vox: 0, voy: 0 });
+    }
+  }
+  clouds.sort((a, b) => b.d - a.d);
+  sparks.length = 0;
+  for (let i = 0; i < 70; i++) {
+    const big = rnd() < 0.3;
+    sparks.push({ x: rnd(), y: Math.pow(rnd(), 1.4) * 0.7, s: (big ? 10 + rnd() * 10 : 3 + rnd() * 4) * Math.max(0.7, U), ph: rnd() * 6.28, f: 0.6 + rnd() * 1.4, big });
+  }
+  dirty = false;
+}
+
+function resize() {
+  DPR = Math.min(1.5, window.devicePixelRatio || 1);
+  W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  build();
+}
+addEventListener('resize', () => { clearTimeout(resize.t); resize.t = setTimeout(resize, 120); });
+
+// ---------- input ----------
+const M = { x: -1e4, y: -1e4, px: -1e4, py: -1e4, v: 0, last: -1e9 };
+let now = 0;
+addEventListener('mousemove', e => {
+  const dx = e.clientX - M.x, dy = e.clientY - M.y;
+  if (M.x > -1e3) M.v = Math.min(1.5, M.v + Math.hypot(dx, dy) / 300);
+  M.x = e.clientX; M.y = e.clientY; M.last = now;
+});
+function shower(x, y, n) {
+  let k = 0;
+  for (let i = 0; i < MAXP && k < n; i++) {
+    const p = parts[i]; if (p.on) continue;
+    k++;
+    const a = Math.random() * 6.283, sp = (160 + Math.random() * 380) * Math.max(0.7, U);
+    p.on = true; p.x = x; p.y = y; p.vx = Math.cos(a) * sp; p.vy = Math.sin(a) * sp - 140 * U;
+    p.r = (Math.random() - 0.5) * 0.8; p.vr = (Math.random() - 0.5) * 3;
+    p.kind = Math.random() < 0.55 ? 0 : Math.random() < 0.6 ? 1 : 2;
+    p.spr = p.kind === 0 ? heartCans[Math.random() * 6 | 0] : p.kind === 1 ? starCans[Math.random() * 6 | 0] : sparkCan;
+    p.s = (p.kind === 2 ? 20 : 26 + Math.random() * 22) * Math.max(0.75, U);
+    p.life = 0; p.max = 2.2 + Math.random() * 1.6; p.ph = Math.random() * 6.28;
+  }
+}
+addEventListener('mousedown', e => { shower(e.clientX, e.clientY, 34); for (const c of clouds) c.vs += 0; });
+
+// ---------- loop ----------
+let last = performance.now(), idleT = 0, nextGift = 3;
+function frame(t) {
+  requestAnimationFrame(frame);
+  if (document.hidden) { last = t; return; }
+  let dt = Math.min(0.05, (t - last) / 1000); last = t;
+  if (dirty) build();
+  const k = P.speed * motion; dt *= k; now += dt;
+  M.v *= Math.pow(0.04, dt / Math.max(k, 0.05));
+
+  // idle breeze: an invisible wandering point that gently puffs clouds
+  const idle = (performance.now() - (M.lastReal || -1e9)) > 3000;
+  const bx = W * (0.5 + 0.45 * Math.sin(now * 0.07)), by = H * (0.72 + 0.12 * Math.sin(now * 0.11 + 1));
+
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.drawImage(bgCan, 0, 0, W, H);
+
+  // sparkles (behind clouds)
+  ctx.globalCompositeOperation = 'lighter';
+  for (const s of sparks) {
+    const tw = 0.5 + 0.5 * Math.sin(now * s.f * 1.6 + s.ph);
+    const a = s.big ? Math.pow(tw, 3) : 0.25 + tw * 0.5;
+    ctx.globalAlpha = a * 0.9;
+    const sz = s.s * (s.big ? 0.6 + tw * 0.5 : 1);
+    ctx.drawImage(s.big ? sparkCan : dotCan, s.x * W - sz, s.y * H - sz, sz * 2, sz * 2);
+  }
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+
+  // moon
+  const mx = W * 0.8, my = H * 0.2 + Math.sin(now * 0.3) * 4 * U;
+  ctx.save(); ctx.translate(mx, my); ctx.rotate(Math.sin(now * 0.25) * 0.04);
+  ctx.drawImage(moon.can, -moon.S / 2, -moon.S / 2, moon.S, moon.S); ctx.restore();
+
+  // clouds
+  for (const c of clouds) {
+    c.x += c.sp * dt;
+    if (c.x > W + 20) c.x = -c.spr.w - 20;
+    const cx = c.x + c.spr.w / 2 + c.ox, cy = c.y + Math.sin(now * 0.35 + c.ph) * 5 * U + c.oy;
+    // cursor or breeze influence
+    let inf = 0, dx = 0, dy = 0;
+    const R = c.spr.w * 0.55;
+    if (M.x > -1e3) { dx = cx - M.x; dy = cy - M.y; const d = Math.hypot(dx, dy); if (d < R * 1.2) inf = (1 - d / (R * 1.2)) * (0.35 + M.v); }
+    if (idle) { const ex = cx - bx, ey = cy - by, d = Math.hypot(ex, ey); if (d < R) { const f = (1 - d / R) * 0.25; if (f > inf) { inf = f; dx = ex; dy = ey; } } }
+    const tgt = 1 + Math.min(0.12, inf * 0.09);
+    c.vs += ((tgt - c.sc) * 60 - c.vs * 7) * dt; c.sc += c.vs * dt;
+    const dl = Math.hypot(dx, dy) || 1, push = Math.min(1, inf) * 18 * U;
+    c.vox += ((dx / dl * push - c.ox) * 30 - c.vox * 6) * dt; c.voy += ((dy / dl * push - c.oy) * 30 - c.voy * 6) * dt;
+    c.ox += c.vox * dt; c.oy += c.voy * dt;
+    const sx = c.sc * (1 + (c.sc - 1) * 0.4), sy = c.sc;
+    const w = c.spr.w * sx, h = c.spr.h * sy;
+    ctx.drawImage(c.spr.can, c.x + c.ox - (w - c.spr.w) / 2, c.y + c.oy + Math.sin(now * 0.35 + c.ph) * 5 * U - (h - c.spr.h) * 0.8, w, h);
+  }
+
+  // occasional gift: a lone heart floats up from the cloud sea
+  if (now > nextGift) {
+    nextGift = now + 4 + Math.random() * 5;
+    for (let i = 0; i < MAXP; i++) { const p = parts[i]; if (p.on) continue;
+      p.on = true; p.x = W * (0.08 + Math.random() * 0.84); p.y = H * 1.02; p.vx = (Math.random() - 0.5) * 10; p.vy = -(30 + Math.random() * 20) * U;
+      p.r = 0; p.vr = 0; p.kind = 3; p.spr = Math.random() < 0.6 ? heartCans[Math.random() * 6 | 0] : starCans[Math.random() * 6 | 0];
+      p.s = (14 + Math.random() * 10) * Math.max(0.75, U); p.life = 0; p.max = 14; p.ph = Math.random() * 6.28; break; }
+  }
+
+  // particles
+  for (let i = 0; i < MAXP; i++) {
+    const p = parts[i]; if (!p.on) continue;
+    p.life += dt;
+    if (p.life > p.max || p.y > H + 80 || p.y < -80) { p.on = false; continue; }
+    if (p.kind === 3) { p.x += (p.vx + Math.sin(now * 1.2 + p.ph) * 14 * U) * dt; p.y += p.vy * dt; p.r = Math.sin(now * 1.5 + p.ph) * 0.25; }
+    else {
+      const dr = Math.pow(0.25, dt); p.vx *= dr; p.vy = p.vy * dr + 55 * U * dt;
+      p.x += (p.vx + Math.sin(now * 3 + p.ph) * 20 * U) * dt; p.y += p.vy * dt; p.r += p.vr * dt; p.vr *= dr;
+    }
+    const lt = p.life / p.max;
+    const a = (p.kind === 3 ? Math.min(1, p.life * 0.6) * (1 - Math.max(0, (p.max - p.life) < 2 ? 1 - (p.max - p.life) / 2 : 0)) * 0.8 : Math.min(1, p.life * 8) * (1 - lt * lt));
+    const sc = p.kind === 2 ? 0.6 + 0.6 * Math.abs(Math.sin(now * 6 + p.ph)) : Math.min(1, p.life * 6) * (1 - lt * 0.3);
+    const s = p.s * sc;
+    ctx.globalAlpha = Math.max(0, a);
+    ctx.setTransform(DPR * Math.cos(p.r), DPR * Math.sin(p.r), -DPR * Math.sin(p.r), DPR * Math.cos(p.r), p.x * DPR, p.y * DPR);
+    ctx.drawImage(p.spr, -s, -s, s * 2, s * 2);
+  }
+  ctx.globalAlpha = 1;
+}
+addEventListener('mousemove', () => { M.lastReal = performance.now(); });
+resize();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

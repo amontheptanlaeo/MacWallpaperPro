@@ -10,7 +10,7 @@ export async function queue(request: Request, env: Env): Promise<Response> {
   ).all<WallpaperRow & { author_email: string }>();
   return json({
     items: results.map((r) => ({
-      ...toDetail(r, false),
+      ...toDetail(r),
       authorEmail: r.author_email,
       previewUrl: `/preview/${r.id}`,
       scan: parseScan(r.scan_flags),
@@ -24,10 +24,10 @@ export async function review(request: Request, env: Env, id: string, action: "ap
   if (action === "reject") {
     const body = await readJson(request);
     reason = typeof body.reason === "string" ? body.reason.trim() : "";
-    if (!reason || reason.length > 500) throw new HttpError(400, "invalid_reason", "ระบุเหตุผลที่ไม่อนุมัติ (ไม่เกิน 500 ตัวอักษร)");
+    if (!reason || reason.length > 500) throw new HttpError(400, "invalid_reason", "Give a reason for rejecting (up to 500 characters).");
   }
   const row = await env.DB.prepare(`${WP_SELECT} WHERE w.id = ?`).bind(id).first<WallpaperRow>();
-  if (!row) throw new HttpError(404, "not_found", "ไม่พบวอลเปเปอร์นี้");
+  if (!row) throw new HttpError(404, "not_found", "Wallpaper not found.");
   const now = new Date().toISOString();
   await env.DB.prepare(
     "UPDATE wallpapers SET status = ?, reject_reason = ?, reviewed_at = ?, reviewed_by = ?, updated_at = ? WHERE id = ?",

@@ -8,8 +8,7 @@ export interface WallpaperRow {
   title: string;
   description: string;
   tags: string;
-  price_cents: number;
-  currency: string;
+  category: string;
   status: "pending" | "approved" | "rejected";
   reject_reason: string | null;
   version: number;
@@ -25,15 +24,20 @@ export interface WallpaperRow {
 
 export const WP_SELECT = `SELECT w.*, u.display_name AS author_name FROM wallpapers w JOIN users u ON u.id = w.owner_id`;
 
+/**
+ * Contract with the macOS app (docs/ARCHITECTURE.md). Everything is free: `priceCents` is always 0
+ * and `currency` stays "thb" only so older app builds keep decoding the response.
+ */
 export interface WallpaperSummary {
   id: string;
   title: string;
   author: { id: string; name: string };
-  priceCents: number;
+  priceCents: 0;
   currency: "thb";
   thumbUrl: string;
   downloads: number;
   tags: string[];
+  category: string;
   createdAt: string;
 }
 
@@ -55,24 +59,26 @@ export function toSummary(r: WallpaperRow): WallpaperSummary {
     id: r.id,
     title: r.title,
     author: { id: r.owner_id, name: r.author_name },
-    priceCents: r.price_cents,
+    priceCents: 0,
     currency: "thb",
     // Relative to the site base URL (the app resolves it against its configured base).
     thumbUrl: `/api/wallpapers/${r.id}/thumb`,
     downloads: r.downloads,
     tags: parseTags(r.tags),
+    category: r.category,
     createdAt: r.created_at,
   };
 }
 
-export function toDetail(r: WallpaperRow, owned: boolean): WallpaperDetail {
+export function toDetail(r: WallpaperRow): WallpaperDetail {
   return {
     ...toSummary(r),
     description: r.description,
     version: r.version,
     sizeBytes: r.size_bytes,
     sha256: r.sha256,
-    owned,
+    // Kept for old app builds: every approved wallpaper is free, so it is always installable.
+    owned: true,
     status: r.status,
   };
 }
@@ -89,18 +95,4 @@ export function parseScan(s: string): ScanFinding[] {
 /** Who may see a non-approved wallpaper (detail, preview, thumb, download). */
 export function canSeeUnpublished(user: User | null, r: WallpaperRow): boolean {
   return !!user && (user.id === r.owner_id || user.role === "admin");
-}
-
-export async function hasPurchased(env: Env, userId: string, wallpaperId: string): Promise<boolean> {
-  const row = await env.DB.prepare("SELECT 1 AS ok FROM purchases WHERE user_id = ? AND wallpaper_id = ? AND status = 'paid' LIMIT 1")
-    .bind(userId, wallpaperId)
-    .first();
-  return !!row;
-}
-
-export async function inLibrary(env: Env, userId: string, wallpaperId: string): Promise<boolean> {
-  const row = await env.DB.prepare("SELECT 1 AS ok FROM library WHERE user_id = ? AND wallpaper_id = ?")
-    .bind(userId, wallpaperId)
-    .first();
-  return !!row;
 }

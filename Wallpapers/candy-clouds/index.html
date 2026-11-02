@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Candy Clouds</title>
+<!--
+  Candy Clouds — MacWallpaperPro community wallpaper.
+  Pastel sky (static backdrop canvas), three depths of fluffy cloud sprites,
+  glossy balloon sprites, twinkling sparkles and a confetti particle pool.
+  Interaction: cursor gently pushes clouds aside; click a balloon to pop it
+  into confetti (it floats back up from below a moment later).
+-->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #f7c9de; }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(() => {
+'use strict';
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const RM = matchMedia('(prefers-reduced-motion: reduce)');
+const P = { speed: 1 };
+window.setP = o => { if (o && typeof o.speed === 'number' && isFinite(o.speed)) P.speed = Math.max(0, Math.min(4, o.speed)); };
+function rnd(seed) { let s = seed >>> 0; return () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const R = rnd(2024);
+
+let W = 0, H = 0, DPR = 1, U = 1;
+const bg = document.createElement('canvas');
+
+// ---------- palette ----------
+const SKY = [[0, '#a9a2ee'], [0.38, '#d7b4ef'], [0.68, '#ffc6de'], [1, '#ffe4cf']];
+const BALLOON = ['#ff8fb8', '#ffd36e', '#8fd8ff', '#b9a2ff', '#8ff0c8', '#ffad8a', '#ff9fe0'];
+const CONF = ['#ff8fb8', '#ffd36e', '#8fd8ff', '#b9a2ff', '#8ff0c8', '#ffffff', '#ff6f9f'];
+
+// ---------- backdrop ----------
+function paintBG() {
+  bg.width = cv.width; bg.height = cv.height;
+  const g = bg.getContext('2d'); g.scale(DPR, DPR);
+  const sg = g.createLinearGradient(0, 0, 0, H);
+  for (const s of SKY) sg.addColorStop(s[0], s[1]);
+  g.fillStyle = sg; g.fillRect(0, 0, W, H);
+  // soft glow low on the horizon
+  const hg = g.createRadialGradient(W * 0.5, H * 1.05, 0, W * 0.5, H * 1.05, Math.max(W, H) * 0.75);
+  hg.addColorStop(0, 'rgba(255,246,224,0.85)'); hg.addColorStop(1, 'rgba(255,246,224,0)');
+  g.fillStyle = hg; g.fillRect(0, 0, W, H);
+  // faint pastel rainbow
+  const cx = W * 0.62, cy = H * 1.18, r0 = Math.max(W, H) * 0.72, bw = 13 * U;
+  const bands = ['#ff9ec4', '#ffc79a', '#fff0a0', '#b4f0c0', '#a8dcff', '#c8b4ff'];
+  g.globalAlpha = 0.17;
+  for (let i = 0; i < bands.length; i++) { g.strokeStyle = bands[i]; g.lineWidth = bw + 1; g.beginPath(); g.arc(cx, cy, r0 - i * bw, Math.PI * 1.02, Math.PI * 1.98); g.stroke(); }
+  g.globalAlpha = 1;
+  // fade rainbow ends into haze
+  const fg = g.createLinearGradient(0, H * 0.55, 0, H);
+  fg.addColorStop(0, 'rgba(255,228,214,0)'); fg.addColorStop(1, 'rgba(255,228,214,0.75)');
+  g.fillStyle = fg; g.fillRect(0, 0, W, H);
+  // tiny dust stars baked in
+  const r = rnd(9);
+  for (let i = 0; i < 160; i++) { const y = Math.pow(r(), 1.6) * H * 0.7; g.fillStyle = `rgba(255,255,255,${(0.25 + r() * 0.5).toFixed(2)})`; g.beginPath(); g.arc(r() * W, y, (0.6 + r() * 1.1) * U, 0, 6.283); g.fill(); }
+}
+
+// ---------- cloud sprites ----------
+function cloudSprite(rad, tone, seed) {
+  const r = rnd(seed);
+  const pad = rad * 0.5;
+  const w = rad * 3.2 + pad * 2, h = rad * 1.7 + pad * 2;
+  const c = document.createElement('canvas'); c.width = Math.ceil(w * DPR); c.height = Math.ceil(h * DPR);
+  const g = c.getContext('2d'); g.scale(DPR, DPR);
+  const base = pad + rad * 1.45; // flat bottom line
+  const puffs = []; const n = 5 + (r() * 4 | 0);
+  for (let i = 0; i < n; i++) {
+    const u = i / (n - 1), x = pad + rad * 0.35 + u * rad * 2.5;
+    const pr = rad * (0.36 + Math.sin(u * Math.PI) * 0.42 + r() * 0.12);
+    puffs.push([x, base - pr * (0.55 + r() * 0.2), pr]);
+  }
+  const blob = (dx, dy, k, col) => {
+    g.fillStyle = col; g.beginPath();
+    for (const p of puffs) { g.moveTo(p[0] + dx + p[2] * k, p[1] + dy); g.arc(p[0] + dx, p[1] + dy, p[2] * k, 0, 6.283); }
+    rrPath(g, pad + rad * 0.2 + dx, base - rad * 0.42 + dy, rad * 2.8, rad * 0.42 * k + 1, rad * 0.21 * k);
+    g.fill();
+  };
+  // halo
+  g.save(); g.shadowColor = tone.glow; g.shadowBlur = rad * 0.35; blob(0, 0, 1, tone.shade); g.restore();
+  blob(0, 0, 1, tone.shade);
+  // main body sits higher -> crescent shading under every puff
+  blob(0, -rad * 0.13, 0.96, tone.main);
+  // soft highlights
+  for (const p of puffs) {
+    const hx_ = p[0] - p[2] * 0.25, hy_ = p[1] - rad * 0.13 - p[2] * 0.3;
+    const hg = g.createRadialGradient(hx_, hy_, 0, hx_, hy_, p[2] * 0.75);
+    hg.addColorStop(0, tone.hi); hg.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = hg; g.beginPath(); g.arc(hx_, hy_, p[2] * 0.75, 0, 6.283); g.fill();
+  }
+  g.globalAlpha = 1;
+  // a couple of tiny blush spots on the biggest puff for cuteness
+  return { c, w, h, ox: pad + rad * 1.6, oy: base, rad };
+}
+function rrPath(g, x, y, w, h, r) { r = Math.min(r, h / 2, w / 2); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+
+const TONES = [
+  { main: '#ece0fb', shade: '#cdb6ee', hi: '#ffffff', glow: 'rgba(255,255,255,0.5)' }, // far
+  { main: '#f9ebf7', shade: '#eec0dc', hi: '#ffffff', glow: 'rgba(255,255,255,0.6)' }, // mid
+  { main: '#fdeff5', shade: '#f9bcd6', hi: '#ffffff', glow: 'rgba(255,240,250,0.7)' }, // near
+];
+let clouds = [];
+function makeClouds() {
+  clouds = [];
+  const spec = [
+    { n: 6, rmin: 34, rmax: 54, ymin: 0.08, ymax: 0.5, sp: 5, depth: 0 },
+    { n: 5, rmin: 60, rmax: 92, ymin: 0.30, ymax: 0.74, sp: 9, depth: 1 },
+    { n: 6, rmin: 110, rmax: 165, ymin: 0.84, ymax: 1.02, sp: 14, depth: 2 },
+  ];
+  let seed = 1;
+  for (const s of spec) for (let i = 0; i < s.n; i++) {
+    const rad = (s.rmin + R() * (s.rmax - s.rmin)) * U;
+    const spr = cloudSprite(rad, TONES[s.depth], seed++ * 31);
+    let y = H * (s.ymin + R() * (s.ymax - s.ymin));
+    let x = (i + R() * 0.9) / s.n * (W + spr.w) - spr.w * 0.5;
+    // keep the clock zone (upper centre) airy: push mid clouds out of it
+    if (s.depth === 0 && Math.abs(x + spr.w / 2 - W / 2) < W * 0.2 && y < H * 0.45) x += (x + spr.w / 2 < W / 2 ? -1 : 1) * W * 0.22;
+    clouds.push({ spr, x, y, sp: s.sp * (0.8 + R() * 0.4) * U, depth: s.depth, dx: 0, dy: 0, vx: 0, vy: 0, bob: R() * 6.28 });
+  }
+}
+
+// ---------- balloons ----------
+const bSprites = [];
+function balloonSprite(col, r) {
+  const w = r * 2.4, h = r * 3.0;
+  const c = document.createElement('canvas'); c.width = Math.ceil(w * DPR); c.height = Math.ceil(h * DPR);
+  const g = c.getContext('2d'); g.scale(DPR, DPR);
+  const cx = w / 2, cy = r * 1.3;
+  const shape = () => { g.beginPath(); g.moveTo(cx, cy + r * 1.22); g.bezierCurveTo(cx - r * 0.55, cy + r * 1.05, cx - r * 1.08, cy + r * 0.45, cx - r * 1.0, cy - r * 0.15); g.bezierCurveTo(cx - r * 0.95, cy - r * 0.9, cx - r * 0.45, cy - r * 1.18, cx, cy - r * 1.18); g.bezierCurveTo(cx + r * 0.45, cy - r * 1.18, cx + r * 0.95, cy - r * 0.9, cx + r * 1.0, cy - r * 0.15); g.bezierCurveTo(cx + r * 1.08, cy + r * 0.45, cx + r * 0.55, cy + r * 1.05, cx, cy + r * 1.22); g.closePath(); };
+  const gr = g.createRadialGradient(cx - r * 0.35, cy - r * 0.45, r * 0.1, cx, cy, r * 1.35);
+  gr.addColorStop(0, lighten(col, 0.45)); gr.addColorStop(0.55, col); gr.addColorStop(1, darken(col, 0.2));
+  g.save(); g.shadowColor = 'rgba(120,60,140,0.18)'; g.shadowBlur = r * 0.35; g.shadowOffsetY = r * 0.12;
+  shape(); g.fillStyle = gr; g.fill(); g.restore();
+  // rim light
+  g.save(); shape(); g.clip(); g.globalAlpha = 0.35; g.fillStyle = '#ffffff'; g.beginPath(); g.ellipse(cx + r * 0.7, cy + r * 0.5, r * 0.25, r * 0.6, -0.4, 0, 6.283); g.fill(); g.restore();
+  // gloss
+  g.fillStyle = 'rgba(255,255,255,0.75)'; g.beginPath(); g.ellipse(cx - r * 0.42, cy - r * 0.55, r * 0.17, r * 0.32, 0.55, 0, 6.283); g.fill();
+  g.fillStyle = 'rgba(255,255,255,0.55)'; g.beginPath(); g.arc(cx - r * 0.2, cy - r * 0.92, r * 0.07, 0, 6.283); g.fill();
+  // knot
+  g.fillStyle = darken(col, 0.12); g.beginPath(); g.moveTo(cx, cy + r * 1.18); g.lineTo(cx - r * 0.12, cy + r * 1.36); g.lineTo(cx + r * 0.12, cy + r * 1.36); g.closePath(); g.fill();
+  return { c, w, h, ax: cx, ay: cy + r * 1.36, cy, r };
+}
+const hx = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+const lighten = (h, k) => { const c = hx(h); return `rgb(${c.map(v => Math.round(v + (255 - v) * k)).join(',')})`; };
+const darken = (h, k) => { const c = hx(h); return `rgb(${c.map(v => Math.round(v * (1 - k))).join(',')})`; };
+
+let balloons = [];
+function spawnX() { // favour the sides, keep the clock zone calmer
+  const u = R(); return u < 0.5 ? W * (0.03 + u * 0.66) : W * (0.67 + (u - 0.5) * 0.6);
+}
+function makeBalloons() {
+  bSprites.length = 0; balloons = [];
+  const n = W > H ? 9 : 7;
+  for (let i = 0; i < n; i++) {
+    const ci = i % BALLOON.length, r = (26 + R() * 22) * U;
+    bSprites.push(balloonSprite(BALLOON[ci], r));
+    balloons.push({ s: i, x: spawnX(), y: H * (0.12 + R() * 0.72), vy: (9 + R() * 9) * U, ph: R() * 6.28, sw: 0.6 + R() * 0.6, dead: 0, ci, len: (90 + R() * 70) * U });
+  }
+}
+
+// ---------- particles: confetti + sparkles ----------
+const NC = 700;
+const cx_ = new Float32Array(NC), cy_ = new Float32Array(NC), cvx = new Float32Array(NC), cvy = new Float32Array(NC), cl = new Float32Array(NC), ca = new Float32Array(NC), cva = new Float32Array(NC), cs = new Float32Array(NC), cc = new Uint8Array(NC), ck = new Uint8Array(NC);
+let cHead = 0;
+function confetti(x, y, n, power, col) {
+  for (let i = 0; i < n; i++) {
+    const a = R() * 6.283, s = (0.25 + R() * 0.75) * power * U;
+    cx_[cHead] = x; cy_[cHead] = y; cvx[cHead] = Math.cos(a) * s; cvy[cHead] = Math.sin(a) * s - power * 0.35 * U;
+    cl[cHead] = 2.2 + R() * 1.8; ca[cHead] = R() * 6.28; cva[cHead] = (R() - 0.5) * 14; cs[cHead] = (6 + R() * 7) * U;
+    cc[cHead] = R() < 0.35 && col >= 0 ? 255 : (R() * CONF.length) | 0; ck[cHead] = R() < 0.3 ? 1 : 0;
+    if (cc[cHead] === 255) cc[cHead] = col;
+    cHead = (cHead + 1) % NC;
+  }
+}
+const SP = 46, sparks = new Float32Array(SP * 4);
+function makeSparks() { for (let i = 0; i < SP; i++) { let x = R() * W, y = Math.pow(R(), 1.3) * H * 0.75; sparks[i * 4] = x; sparks[i * 4 + 1] = y; sparks[i * 4 + 2] = R() * 6.28; sparks[i * 4 + 3] = (3 + R() * 6) * U; } }
+let rings = [];
+
+// ---------- input ----------
+const M = { x: -1e4, y: -1e4, last: -1e9 };
+addEventListener('mousemove', e => { M.x = e.clientX; M.y = e.clientY; M.last = performance.now(); });
+addEventListener('mousedown', e => {
+  const x = e.clientX, y = e.clientY;
+  let hit = -1, best = 1e9;
+  for (let i = 0; i < balloons.length; i++) {
+    const b = balloons[i]; if (b.dead > 0) continue; const s = bSprites[b.s];
+    const bx = b.x + b.ox, by = b.y - (s.ay - s.cy);
+    const d = Math.hypot((x - bx) / s.r, (y - by) / (s.r * 1.25));
+    if (d < 1.25 && d < best) { best = d; hit = i; }
+  }
+  if (hit >= 0) {
+    const b = balloons[hit], s = bSprites[b.s];
+    const bx = b.x + b.ox, by = b.y - (s.ay - s.cy);
+    confetti(bx, by, 90, 520, b.ci); rings.push([bx, by, 0, BALLOON[b.ci]]);
+    b.dead = 2.2 + R() * 1.5;
+  } else {
+    confetti(x, y, 16, 220, -1); rings.push([x, y, 0, '#ffffff']);
+  }
+  if (rings.length > 8) rings.shift();
+});
+
+function resize() {
+  DPR = Math.min(1.5, devicePixelRatio || 1);
+  W = innerWidth; H = innerHeight; U = Math.min(W, H) / 900;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  paintBG(); makeClouds(); makeBalloons(); makeSparks();
+}
+
+let last = performance.now(), t = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (document.hidden) { last = now; return; }
+  let dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = Math.max(last, now);
+  dt *= P.speed * (RM.matches ? 0.25 : 1);
+  t += dt;
+  const g = ctx;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.drawImage(bg, 0, 0);
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  // sparkles
+  for (let i = 0; i < SP; i++) {
+    const x = sparks[i * 4], y = sparks[i * 4 + 1], ph = sparks[i * 4 + 2], s = sparks[i * 4 + 3];
+    const k = Math.pow(Math.max(0, Math.sin(t * 0.9 + ph)), 3);
+    if (k < 0.02) continue;
+    const z = s * (0.3 + k);
+    g.globalAlpha = 0.85 * k; g.fillStyle = '#ffffff';
+    g.beginPath(); g.moveTo(x, y - z); g.quadraticCurveTo(x, y, x + z, y); g.quadraticCurveTo(x, y, x, y + z); g.quadraticCurveTo(x, y, x - z, y); g.quadraticCurveTo(x, y, x, y - z); g.fill();
+  }
+  g.globalAlpha = 1;
+
+  const idle = performance.now() - M.last > 4000;
+  // clouds — far & mid first, balloons, then near clouds
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 0; i < clouds.length; i++) {
+      const c = clouds[i]; if ((c.depth === 2) !== (pass === 1)) continue;
+      stepCloud(c, dt, idle);
+      const s = c.spr, bob = Math.sin(t * 0.4 + c.bob) * 4 * U;
+      g.drawImage(s.c, c.x + c.dx, c.y + c.dy + bob - s.oy, s.w, s.h);
+    }
+    if (pass === 0) drawBalloons(g, dt);
+  }
+
+  // pop rings
+  for (let i = rings.length - 1; i >= 0; i--) {
+    const q = rings[i]; q[2] += dt * 1.8; if (q[2] >= 1) { rings.splice(i, 1); continue; }
+    g.globalAlpha = (1 - q[2]) * 0.8; g.strokeStyle = q[3]; g.lineWidth = 3 * U * (1 - q[2]) + 0.5;
+    g.beginPath(); g.arc(q[0], q[1], (12 + q[2] * 70) * U, 0, 6.283); g.stroke();
+  }
+  g.globalAlpha = 1;
+  // confetti
+  for (let i = 0; i < NC; i++) {
+    if (cl[i] <= 0) continue;
+    cl[i] -= dt;
+    cvx[i] *= 1 - dt * 2.4; cvy[i] = cvy[i] * (1 - dt * 2.4) + 120 * U * dt;
+    cx_[i] += (cvx[i] + Math.sin(t * 3 + i) * 30 * U) * dt; cy_[i] += cvy[i] * dt; ca[i] += cva[i] * dt;
+    const s = cs[i], flip = Math.cos(t * 6 + i);
+    g.globalAlpha = Math.min(1, cl[i]);
+    g.fillStyle = CONF[cc[i]] || BALLOON[cc[i] % BALLOON.length];
+    g.setTransform(DPR * Math.cos(ca[i]), DPR * Math.sin(ca[i]), -DPR * Math.sin(ca[i]) * flip, DPR * Math.cos(ca[i]) * flip, cx_[i] * DPR, cy_[i] * DPR);
+    if (ck[i]) { g.beginPath(); g.arc(0, 0, s * 0.45, 0, 6.283); g.fill(); } else g.fillRect(-s / 2, -s / 4, s, s / 2);
+  }
+  g.setTransform(DPR, 0, 0, DPR, 0, 0); g.globalAlpha = 1;
+}
+
+function stepCloud(c, dt, idle) {
+  c.x += c.sp * dt;
+  const s = c.spr;
+  if (c.x > W + s.w * 0.1) { c.x = -s.w * 1.05; c.dx = 0; }
+  // push from cursor (soft spring)
+  let fx = 0, fy = 0;
+  if (!idle) {
+    const cx = c.x + c.dx + s.ox, cy = c.y + c.dy - s.rad * 0.5;
+    const ddx = cx - M.x, ddy = cy - M.y, d = Math.hypot(ddx, ddy) + 1e-3, reach = s.rad * 2.2 + 60 * U;
+    if (d < reach) { const k = (1 - d / reach); const f = k * k * 900 * U * (1.4 - c.depth * 0.3); fx = ddx / d * f; fy = ddy / d * f * 0.6; }
+  }
+  c.vx += (fx - c.dx * 3.2 - c.vx * 2.6) * dt; c.vy += (fy - c.dy * 3.2 - c.vy * 2.6) * dt;
+  c.dx += c.vx * dt; c.dy += c.vy * dt;
+}
+
+function drawBalloons(g, dt) {
+  g.lineCap = 'round';
+  for (let i = 0; i < balloons.length; i++) {
+    const b = balloons[i], s = bSprites[b.s];
+    if (b.dead > 0) { b.dead -= dt; if (b.dead <= 0) { b.y = H + s.h + b.len; b.x = spawnX(); } continue; }
+    b.ph += dt * b.sw;
+    b.y -= b.vy * dt;
+    b.ox = Math.sin(b.ph) * 18 * U;
+    if (b.y < -s.h - 20 * U) { b.y = H + s.h + b.len; b.x = spawnX(); }
+    // nudge from cursor
+    const bx = b.x + b.ox, by = b.y;
+    const tilt = Math.cos(b.ph) * 0.08;
+    // string
+    g.strokeStyle = 'rgba(150,110,170,0.55)'; g.lineWidth = 1.3 * U + 0.3;
+    g.beginPath(); g.moveTo(bx, by);
+    const sway = Math.sin(b.ph * 1.3 + 1) * 14 * U;
+    g.bezierCurveTo(bx + sway, by + b.len * 0.35, bx - sway, by + b.len * 0.7, bx + sway * 0.4 - b.ox * 0.6, by + b.len);
+    g.stroke();
+    g.save(); g.translate(bx, by); g.rotate(tilt);
+    g.drawImage(s.c, -s.ax, -s.ay, s.w, s.h);
+    g.restore();
+  }
+}
+
+let rt = 0;
+addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(resize, 150); });
+resize();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

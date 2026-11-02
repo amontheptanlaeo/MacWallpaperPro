@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sakura Breeze</title>
+<!--
+  Sakura Breeze - MacWallpaperPro community wallpaper (nature)
+  Trees and hills are painted procedurally into two canvases once (per resize) and
+  composited in WebGL with parallax, sway and soft sun shafts. Petals are GPU quads
+  with a procedural petal shape, 3D flip and depth blur.
+  Cursor: its motion becomes wind that pushes nearby petals. Click: a gust that
+  shakes the branches and releases a flurry.
+  window.setP({c1: blossom, c2: sky, c3: warm light, speed})
+-->
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#cfe0ef linear-gradient(#a9c6e6,#f4e2e8 65%,#d9c6cc)}
+  canvas{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(() => {
+'use strict';
+const P = { c1:[1.0,0.74,0.82], c2:[0.62,0.76,0.92], c3:[1.0,0.86,0.66], speed:1 };
+window.setP = o => { if(!o) return; for (const k of ['c1','c2','c3']) if (Array.isArray(o[k]) && o[k].length>=3) P[k]=o[k].slice(0,3); if (typeof o.speed==='number' && isFinite(o.speed)) P.speed=Math.max(0,Math.min(4,o.speed)); if (o.c1&&window.__sakuraRepaint) window.__sakuraRepaint(); };
+const RM = matchMedia('(prefers-reduced-motion: reduce)');
+const cv = document.getElementById('c');
+const gl = cv.getContext('webgl', { antialias:false, alpha:false, depth:false, stencil:false, powerPreference:'low-power' });
+if (!gl) return;
+
+const VS=`attribute vec2 a;varying vec2 vUv;void main(){vUv=a*.5+.5;gl_Position=vec4(a,0.,1.);}`;
+const FS=`precision highp float;varying vec2 vUv;
+uniform vec2 R; uniform float T; uniform vec2 M; uniform float SW;
+uniform vec3 C1,C2,C3; uniform sampler2D FAR,NEAR;
+float h2(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+float ns(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h2(i),h2(i+vec2(1,0)),f.x),mix(h2(i+vec2(0,1)),h2(i+vec2(1,1)),f.x),f.y);}
+float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<5;i++){v+=a*ns(p);p=p*2.03+vec2(7.1,3.7);a*=.5;}return v;}
+float n1(float x){float i=floor(x),f=fract(x);f=f*f*(3.-2.*f);return mix(h2(vec2(i,1.)),h2(vec2(i+1.,1.)),f);}
+void main(){
+  vec2 uv=vUv; vec2 fc=gl_FragCoord.xy; float AR=R.x/R.y;
+  vec2 sun=vec2(.80,.92);
+  vec3 col=mix(mix(C3,vec3(1.,.9,.92),.5),C2,smoothstep(.35,1.,uv.y));
+  col=mix(col,C1*.25+vec3(.75,.7,.75),smoothstep(.45,.25,uv.y)*.4);
+  float sd=length((uv-sun)*vec2(AR,1.));
+  col+=C3*exp(-sd*2.5)*.18+vec3(1.,.97,.9)*exp(-sd*9.)*.15;
+  vec2 cp=vec2(uv.x*AR*1.2+T*.004,uv.y*5.);
+  float cl=smoothstep(.42,.75,fbm(cp+vec2(0.,fbm(cp*.5)*.8)))*smoothstep(.55,.8,uv.y)*smoothstep(1.05,.85,uv.y);
+  col=mix(col,mix(vec3(1.,.98,.98),C3,.25),cl*.7);
+  vec4 far=texture2D(FAR,uv+vec2(M.x*.004,M.y*.002));
+  col=col*(1.-far.a)+far.rgb;
+  // haze over far layer
+  col=mix(col,mix(C3,vec3(1.),.6),smoothstep(.55,.2,uv.y)*.12);
+  // sway: stronger away from the trunk anchors
+  float anc=min(length((uv-vec2(0.,0.))*vec2(AR,1.)),length((uv-vec2(1.,.9))*vec2(AR,1.)));
+  vec2 sw=vec2(sin(T*.9+uv.y*5.+uv.x*3.)*.0012+sin(T*2.3+uv.x*9.)*.0005*SW, cos(T*.7+uv.x*4.)*.0008)*(1.+SW*2.5)*smoothstep(.1,1.,anc);
+  vec4 nr=texture2D(NEAR,uv+vec2(M.x*.012,M.y*.005)+sw);
+  // sun shafts through the canopy
+  vec2 dv=(uv-sun)*vec2(AR,1.); float ang=atan(dv.y,dv.x);
+  vec2 ad=vec2(cos(ang),sin(ang));float ray=ns(ad*4.+T*.05)*ns(ad*1.8-T*.03+4.)*1.4;
+  float shaft=pow(ray,2.)*exp(-length(dv)*.9)*smoothstep(.0,.3,length(dv));
+  col+=C3*shaft*.16*(1.-nr.a*.8);
+  // translucent glow of petals lit from behind
+  vec3 nc=nr.rgb+C3*nr.a*.12*exp(-sd*1.2);
+  col=col*(1.-nr.a)+nc;
+  col+=mix(C3,vec3(1.),.5)*exp(-sd*4.)*.06;
+  col*=mix(.82,1.,smoothstep(1.3,.4,length((uv-.5)*vec2(1.1,1.))));
+  col=pow(col,vec3(1.02));
+  col+=(h2(fc+fract(T))-.5)/255.;
+  gl_FragColor=vec4(col,1.);
+}`;
+const PVS=`attribute vec2 a;attribute vec2 b;attribute vec2 c;uniform vec2 R;varying vec2 vL;varying vec2 vD;
+void main(){vL=b;vD=c;gl_Position=vec4(a.x/R.x*2.-1.,1.-a.y/R.y*2.,0.,1.);}`;
+const PFS=`precision mediump float;varying vec2 vL;varying vec2 vD;uniform vec3 C1,C3;
+void main(){
+  vec2 p=vL; // petal space: y from -1 (base) to 1 (tip)
+  float w=.8*sqrt(max(0.,1.-p.y*p.y))*(1.+.2*p.y);
+  float d=abs(p.x)-w;
+  float notch=.22-abs(p.x)*1.1-(1.-p.y)*2.2; // little V notch at the tip
+  d=max(d,notch);
+  float bl=vD.y;
+  float e=.06+bl*.55;
+  float a=smoothstep(e,-e,d);
+  vec3 base=mix(C1*vec3(.92,.7,.78),C1,smoothstep(-1.,.2,p.y));
+  base=mix(base,vec3(1.,.96,.97),smoothstep(.3,1.,p.y)*.6);
+  base*=.86+.14*vD.x; base+=C3*.08;
+  a*=mix(.95,.55,bl)*(1.-.0*bl);
+  gl_FragColor=vec4(base*a,a);
+}`;
+function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(o));return o;}
+function prog(v,f){const p=gl.createProgram();gl.attachShader(p,sh(gl.VERTEX_SHADER,v));gl.attachShader(p,sh(gl.FRAGMENT_SHADER,f));gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))console.error(gl.getProgramInfoLog(p));return p;}
+const bgP=prog(VS,FS), ptP=prog(PVS,PFS);
+const qb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,qb);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+const U=n=>gl.getUniformLocation(bgP,n);
+const uR=U('R'),uT=U('T'),uM=U('M'),uSW=U('SW'),uC1=U('C1'),uC2=U('C2'),uC3=U('C3');
+gl.useProgram(bgP);gl.uniform1i(U('FAR'),0);gl.uniform1i(U('NEAR'),1);
+const pR=gl.getUniformLocation(ptP,'R'),pC1=gl.getUniformLocation(ptP,'C1'),pC3=gl.getUniformLocation(ptP,'C3');
+const aBg=gl.getAttribLocation(bgP,'a'),aA=gl.getAttribLocation(ptP,'a'),aB=gl.getAttribLocation(ptP,'b'),aC=gl.getAttribLocation(ptP,'c');
+function mkTex(unit){const t=gl.createTexture();gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);return t;}
+const texFar=mkTex(0),texNear=mkTex(1);
+gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,true);
+
+// ---------- procedural painting ----------
+let seed=1;const rnd=()=>{seed=(seed*16807)%2147483647;return (seed-1)/2147483646;};
+const rgbS=(c,k,a)=>`rgba(${Math.min(255,c[0]*k*255)|0},${Math.min(255,c[1]*k*255)|0},${Math.min(255,c[2]*k*255)|0},${a})`;
+function mixc(a,b,t){return [a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t];}
+function gauss(){return (rnd()+rnd()+rnd()-1.5)/1.5;}
+function cluster(ctx,x,y,s,u,tone){
+  const c1=P.c1, n=Math.round(14+s*1.3);
+  const shade=mixc(c1,[.58,.28,.42],.5), mid=c1, hi=mixc(c1,[1,1,1],.62);
+  ctx.fillStyle=rgbS(shade,tone*.95,.16);ctx.beginPath();ctx.ellipse(x,y+s*.15,s*.75,s*.55,0,0,6.283);ctx.fill();
+  for(let k=0;k<n;k++){const dx=gauss()*s,dy=gauss()*s*.75;ctx.fillStyle=rgbS(shade,tone,.75);ctx.beginPath();ctx.arc(x+dx,y+dy+s*.18,(1.8+rnd()*3.4)*u,0,6.283);ctx.fill();}
+  for(let k=0;k<n;k++){const dx=gauss()*s*.95,dy=gauss()*s*.7-s*.06;ctx.fillStyle=rgbS(mixc(mid,shade,rnd()*.3),tone,.82);ctx.beginPath();ctx.arc(x+dx,y+dy,(1.6+rnd()*3.)*u,0,6.283);ctx.fill();}
+  for(let k=0;k<n*.7;k++){const dx=gauss()*s*.75+s*.15,dy=gauss()*s*.5-s*.25;ctx.fillStyle=rgbS(hi,tone,.88);ctx.beginPath();ctx.arc(x+dx,y+dy,(1.1+rnd()*2.)*u,0,6.283);ctx.fill();}
+  for(let k=0;k<n*.3;k++){const dx=gauss()*s*.8,dy=gauss()*s*.6;ctx.fillStyle='rgba(160,60,100,.5)';ctx.beginPath();ctx.arc(x+dx,y+dy,.8*u,0,6.283);ctx.fill();}
+}
+const blossomQ=[];
+function branch(ctx,x,y,a,len,w,d,u,lo,hi){
+  const bend=(rnd()-.5)*.7;
+  const mx=x+Math.cos(a+bend)*len*.5,my=y+Math.sin(a+bend)*len*.5;
+  const ex=x+Math.cos(a)*len,ey=y+Math.sin(a)*len;
+  const w1=Math.max(1.1*u,w*(.6+rnd()*.08));
+  ctx.lineCap='round';
+  let lx=x,ly=y;
+  for(let s=1;s<=10;s++){const t=s/10,it=1-t;
+    const qx=it*it*x+2*it*t*mx+t*t*ex,qy=it*it*y+2*it*t*my+t*t*ey;
+    const ww=w+(w1-w)*t;
+    ctx.strokeStyle='#3a272e';ctx.lineWidth=ww;ctx.beginPath();ctx.moveTo(lx,ly);ctx.lineTo(qx,qy);ctx.stroke();
+    if(ww>4*u){ctx.strokeStyle='rgba(122,88,94,.35)';ctx.lineWidth=ww*.22;ctx.beginPath();ctx.moveTo(lx-ww*.2,ly-ww*.25);ctx.lineTo(qx-ww*.2,qy-ww*.25);ctx.stroke();}
+    lx=qx;ly=qy;}
+  if(d<=3||len<50*u){const nb=d<=1?3:2;for(let k=0;k<nb;k++){const t=.25+rnd()*.75;blossomQ.push(x+(ex-x)*t+(rnd()-.5)*12*u,y+(ey-y)*t+(rnd()-.5)*12*u,(12+rnd()*14)*u*(d<=1?1.1:.8));}}
+  if(d===0||len<16*u){blossomQ.push(ex,ey,(18+rnd()*16)*u);return;}
+  const nc=2+(rnd()<.3?1:0);
+  for(let k=0;k<nc;k++){
+    let na=a+(k===0?-1:1)*(.22+rnd()*.45)+(k===2?(rnd()-.5)*.4:0);
+    na=Math.max(lo,Math.min(hi,na));
+    branch(ctx,ex,ey,na,len*(.66+rnd()*.16),w1*(k===0?1:.85),d-1,u,lo-.14,hi+.14);
+  }
+}
+const farC=document.createElement('canvas'),nearC=document.createElement('canvas');
+function paint(){
+  const W=cv.width,H=cv.height,u=H/1000;
+  // far layer at half resolution (soft by upscaling)
+  farC.width=Math.max(2,W/2|0);farC.height=Math.max(2,H/2|0);
+  const f=farC.getContext('2d'),fw=farC.width,fh=farC.height,fu=fh/1000;
+  f.clearRect(0,0,fw,fh);seed=11;
+  const ridges=[[.60,.06,[.66,.74,.88],.85],[.67,.05,[.76,.72,.84],.95],[.745,.045,[.82,.68,.76],1]];
+  for(const [base,amp,col,al] of ridges){
+    const rg=f.createLinearGradient(0,(base-amp)*fh,0,(base+.12)*fh);rg.addColorStop(0,rgbS(col,1,al));rg.addColorStop(1,rgbS(mixc(col,[1,.93,.92],.55),1,al));
+    f.fillStyle=rg;f.beginPath();f.moveTo(0,fh);
+    const ph=rnd()*10;
+    for(let x=0;x<=fw;x+=4){const t=x/fw;const yy=base-amp*(.6*Math.sin(t*5+ph)+.3*Math.sin(t*13+ph*2)+.1*Math.sin(t*31));f.lineTo(x,yy*fh);}
+    f.lineTo(fw,fh);f.closePath();f.fill();
+  }
+  // distant blossom groves on the nearest hill
+  for(let i=0;i<70;i++){const t=rnd();const x=t*fw;const yy=(.73+.06*rnd())*fh;const s=(10+rnd()*16)*fu;
+    f.fillStyle='rgba(90,60,70,.5)';f.fillRect(x-1*fu,yy,2*fu,s*.8);cluster(f,x,yy,s,fu*.8,.95);}
+  // meadow
+  const g=f.createLinearGradient(0,fh*.78,0,fh);g.addColorStop(0,'rgba(196,206,170,1)');g.addColorStop(1,'rgba(150,170,130,1)');
+  f.fillStyle=g;f.beginPath();f.moveTo(0,fh);for(let x=0;x<=fw;x+=6){const t=x/fw;f.lineTo(x,fh*(.80+.025*Math.sin(t*4+1.)+.01*Math.sin(t*15)));}f.lineTo(fw,fh);f.fill();
+  for(let i=0;i<900;i++){f.fillStyle=rgbS(mixc(P.c1,[1,1,1],rnd()*.5),1,.7);const yy=fh*(.82+.18*rnd());f.beginPath();f.arc(rnd()*fw,yy,(.6+rnd()*1.4)*fu*(yy/fh),0,6.283);f.fill();}
+  // near layer: framing trees
+  nearC.width=W;nearC.height=H;const c=nearC.getContext('2d');c.clearRect(0,0,W,H);seed=5;blossomQ.length=0;
+  branch(c,-50*u,H+40*u,-1.22,300*u,74*u,7,u,-2.25,-.75);
+  branch(c,W+30*u,H*.02,Math.PI+.18,230*u,38*u,6,u,2.75,3.75);
+  // blossoms after wood so they sit on top
+  for(let i=0;i<blossomQ.length;i+=3)cluster(c,blossomQ[i],blossomQ[i+1],blossomQ[i+2],u,1);
+  // foreground bank with fallen petals
+  const g2=c.createLinearGradient(0,H*.86,0,H);g2.addColorStop(0,'rgba(128,150,112,1)');g2.addColorStop(1,'rgba(86,104,82,1)');
+  c.fillStyle=g2;c.beginPath();c.moveTo(0,H);for(let x=0;x<=W;x+=8){const t=x/W;c.lineTo(x,H*(.93-.06*Math.exp(-t*3.)+.012*Math.sin(t*9.)));}c.lineTo(W,H);c.fill();
+  for(let i=0;i<1400;i++){const x=rnd()*W,t=x/W,yy=H*(.93-.06*Math.exp(-t*3.))+rnd()*H*.08;c.fillStyle=rgbS(mixc(P.c1,[1,1,1],rnd()*.6),rnd()<.3?.85:1,.85);
+    c.beginPath();c.ellipse(x,yy,(1.5+rnd()*2.5)*u,(1+rnd()*1.2)*u,rnd()*3,0,6.283);c.fill();}
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,texFar);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,farC);
+  gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,texNear);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,nearC);
+}
+
+// ---------- petals ----------
+const BASE=230,POOL=480;
+const px=new Float32Array(POOL),py=new Float32Array(POOL),pz=new Float32Array(POOL),vx=new Float32Array(POOL),vy=new Float32Array(POOL),
+      rot=new Float32Array(POOL),spin=new Float32Array(POOL),flip=new Float32Array(POOL),fsp=new Float32Array(POOL),ph=new Float32Array(POOL),life=new Float32Array(POOL);
+const VB=new Float32Array(POOL*6*6);const vbuf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,vbuf);gl.bufferData(gl.ARRAY_BUFFER,VB.byteLength,gl.DYNAMIC_DRAW);
+let W=innerWidth,H=innerHeight,S=1;
+function spawnPetal(i,x,y){px[i]=x;py[i]=y;pz[i]=Math.pow(rnd(),1.4);vx[i]=20;vy[i]=30;rot[i]=rnd()*6.28;spin[i]=(rnd()-.5)*2.4;flip[i]=rnd()*6.28;fsp[i]=1+rnd()*2.5;ph[i]=rnd()*100;}
+function resize(){
+  W=innerWidth;H=innerHeight;const dpr=Math.min(devicePixelRatio||1,1.5);let w=W*dpr,h=H*dpr;const s=Math.min(1,Math.sqrt(2.6e6/(w*h)));S=dpr*s;
+  cv.width=Math.max(1,w*s|0);cv.height=Math.max(1,h*s|0);gl.viewport(0,0,cv.width,cv.height);paint();
+}
+let pT=0;window.__sakuraRepaint=()=>{clearTimeout(pT);pT=setTimeout(paint,120);};
+let rT=0;addEventListener('resize',()=>{clearTimeout(rT);rT=setTimeout(resize,150);});resize();
+for(let i=0;i<BASE;i++){spawnPetal(i,rnd()*W,rnd()*H);life[i]=1;}
+let nextG=BASE;
+const mouse={x:-1e4,y:-1e4,vx:0,vy:0,last:-1e9,px:0,py:0};
+let now=0,gust=0,gdir=1,sway=0;
+addEventListener('mousemove',e=>{const dx=e.clientX-mouse.x,dy=e.clientY-mouse.y;
+  if(now-mouse.last<.2){mouse.vx+=dx*3;mouse.vy+=dy*3;}mouse.x=e.clientX;mouse.y=e.clientY;mouse.last=now;});
+addEventListener('mousedown',e=>{
+  mouse.last=now;gdir=e.clientX<W*.5?1:-1;gust=1;
+  for(let k=0;k<70;k++){const i=nextG;nextG=nextG+1>=POOL?BASE:nextG+1;
+    // released from the canopy (top-left / top-right) or around the click
+    const fromTree=rnd()<.6;
+    spawnPetal(i,fromTree?(gdir>0?rnd()*W*.35:W*(.7+rnd()*.3)):e.clientX+(rnd()-.5)*120,fromTree?rnd()*H*.35:e.clientY+(rnd()-.5)*120);
+    vx[i]=gdir*(120+rnd()*260);vy[i]=(rnd()-.5)*120;life[i]=1;}
+  for(let i=0;i<POOL;i++){if(life[i]<=0)continue;const dx=px[i]-e.clientX,dy=py[i]-e.clientY,d=Math.hypot(dx,dy)+1;
+    if(d<350){const f=(1-d/350)*320;vx[i]+=dx/d*f;vy[i]+=dy/d*f*.6;spin[i]*=1.6;}}
+});
+let T=0,last=performance.now();
+function frame(t){
+  requestAnimationFrame(frame);
+  if(document.hidden){last=t;return;}
+  let rdt=Math.min(.05,Math.max(0,(t-last)/1000));last=t;now=t/1000;
+  const dt=rdt*P.speed*(RM.matches?.2:1);T+=dt;
+  gust*=Math.exp(-dt*.9);
+  mouse.vx*=Math.exp(-rdt*4);mouse.vy*=Math.exp(-rdt*4);
+  const mspd=Math.min(1,Math.hypot(mouse.vx,mouse.vy)/1500);
+  sway+=((gust+mspd*.5)-sway)*Math.min(1,dt*2);
+  const idle=now-mouse.last>4;
+  const tx=idle?Math.sin(T*.05)*.4:(mouse.x/W*2-1),ty=idle?Math.sin(T*.04)*.3:(mouse.y/H*2-1);
+  mouse.px+=(tx-mouse.px)*Math.min(1,rdt*1.2);mouse.py+=(ty-mouse.py)*Math.min(1,rdt*1.2);
+  const windX=26+18*Math.sin(T*.23)+10*Math.sin(T*.71)+gdir*gust*300, windY=6*Math.sin(T*.4);
+  const R2=200*200;
+  let n=0;
+  for(let i=0;i<POOL;i++){
+    if(life[i]<=0)continue;
+    const z=pz[i],k=.5+z;
+    let wx=windX*(.6+.5*z),wy=windY+ (22+z*30);
+    const dx=px[i]-mouse.x,dy=py[i]-mouse.y,d2=dx*dx+dy*dy;
+    if(d2<R2){const f=1-d2/R2;wx+=mouse.vx*f*.35;wy+=mouse.vy*f*.35;}
+    const dr=Math.min(1,dt*(.9+.4*z));
+    vx[i]+=(wx-vx[i])*dr;vy[i]+=(wy-vy[i])*dr;
+    const fl=Math.sin(T*fsp[i]*.7+ph[i]);
+    px[i]+=(vx[i]+fl*18*k)*dt;py[i]+=(vy[i]+Math.cos(T*fsp[i]+ph[i])*10*k)*dt;
+    rot[i]+=spin[i]*dt*(1+gust*2);flip[i]+=fsp[i]*dt*(1+gust*2);
+    if(i<BASE){
+      if(py[i]>H+40||px[i]>W+60||px[i]<-80){
+        if(rnd()<.55){spawnPetal(i,rnd()*W*.8-40,-30);}else{spawnPetal(i,windX>0?-30:W+30,rnd()*H*.7);}
+      }
+    } else {life[i]-=dt*.06;if(py[i]>H+40||px[i]>W+80||px[i]<-80)life[i]=0;}
+    // quad
+    const sz=(5+z*z*22)*S*(H/1000+.2);
+    const al=i<BASE?1:Math.min(1,life[i]*3);
+    if(al<=0.01)continue;
+    const cr=Math.cos(rot[i]),sr=Math.sin(rot[i]),fx=Math.cos(flip[i]);
+    const hx=sz*.8*(.4+.6*Math.abs(fx)),hy=sz;
+    const cx=px[i]*S-mouse.px*z*z*14*S,cy=py[i]*S-mouse.py*z*z*6*S;
+    const bl=Math.max(0,(z-.78)/.22)*.9;
+    const shade=.5+.5*fx;
+    const o=n*36;
+    // corners: (-1,-1),(1,-1),(1,1),(-1,-1),(1,1),(-1,1)
+    for(let v=0;v<6;v++){
+      const lx=(v===1||v===2||v===4)?1:-1, ly=(v===2||v===4||v===5)?1:-1;
+      const ax=lx*hx,ay=ly*hy;
+      const q=o+v*6;
+      VB[q]=cx+ax*cr-ay*sr;VB[q+1]=cy+ax*sr+ay*cr;VB[q+2]=lx*1.25;VB[q+3]=ly;VB[q+4]=shade;VB[q+5]=bl+(1-al)*.0;
+    }
+    n++;
+  }
+  gl.disable(gl.BLEND);gl.useProgram(bgP);
+  gl.bindBuffer(gl.ARRAY_BUFFER,qb);gl.enableVertexAttribArray(aBg);gl.vertexAttribPointer(aBg,2,gl.FLOAT,false,0,0);
+  gl.uniform2f(uR,cv.width,cv.height);gl.uniform1f(uT,T);gl.uniform2f(uM,mouse.px,-mouse.py);gl.uniform1f(uSW,sway);
+  gl.uniform3fv(uC1,P.c1);gl.uniform3fv(uC2,P.c2);gl.uniform3fv(uC3,P.c3);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);gl.useProgram(ptP);
+  gl.bindBuffer(gl.ARRAY_BUFFER,vbuf);gl.bufferSubData(gl.ARRAY_BUFFER,0,VB.subarray(0,n*36));
+  gl.enableVertexAttribArray(aA);gl.vertexAttribPointer(aA,2,gl.FLOAT,false,24,0);
+  gl.enableVertexAttribArray(aB);gl.vertexAttribPointer(aB,2,gl.FLOAT,false,24,8);
+  gl.enableVertexAttribArray(aC);gl.vertexAttribPointer(aC,2,gl.FLOAT,false,24,16);
+  gl.uniform2f(pR,cv.width,cv.height);gl.uniform3fv(pC1,P.c1);gl.uniform3fv(pC3,P.c3);
+  gl.drawArrays(gl.TRIANGLES,0,n*6);
+  gl.disableVertexAttribArray(aB);gl.disableVertexAttribArray(aC);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

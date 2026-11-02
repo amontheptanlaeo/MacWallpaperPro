@@ -3,8 +3,6 @@ import { HttpError } from "./http";
 export const MAX_HTML_BYTES = 10 * 1024 * 1024; // 10 MB
 export const MAX_THUMB_BYTES = 2 * 1024 * 1024; // 2 MB
 export const MAX_UPLOAD_BODY = MAX_HTML_BYTES + MAX_THUMB_BYTES + 256 * 1024;
-export const MIN_PAID_CENTS = 2000; // 20 THB
-export const MAX_PRICE_CENTS = 1_000_000; // 10,000 THB
 export const MAX_TITLE = 80;
 export const MAX_DESCRIPTION = 2000;
 export const MAX_TAGS = 8;
@@ -25,23 +23,23 @@ export function sniffImage(b: Uint8Array): ImageType | null {
 const bad = (code: string, message: string) => new HttpError(400, code, message);
 
 export function validateHtml(bytes: Uint8Array): string {
-  if (bytes.byteLength === 0) throw bad("invalid_file", "ไฟล์ index.html ว่างเปล่า");
-  if (bytes.byteLength > MAX_HTML_BYTES) throw new HttpError(413, "file_too_large", "ไฟล์ index.html ต้องไม่เกิน 10 MB");
+  if (bytes.byteLength === 0) throw bad("invalid_file", "index.html is empty.");
+  if (bytes.byteLength > MAX_HTML_BYTES) throw new HttpError(413, "file_too_large", "index.html must be 10 MB or smaller.");
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
   } catch {
-    throw bad("invalid_file", "index.html ต้องเป็นข้อความ UTF-8");
+    throw bad("invalid_file", "index.html must be UTF-8 text.");
   }
-  if (!/<html[\s>]/i.test(text)) throw bad("invalid_file", "ไฟล์นี้ไม่ใช่ HTML (ต้องมีแท็ก <html>)");
+  if (!/<html[\s>]/i.test(text)) throw bad("invalid_file", "This is not an HTML file (no <html> tag).");
   return text;
 }
 
 export function validateThumb(bytes: Uint8Array): ImageType {
-  if (bytes.byteLength === 0) throw bad("invalid_thumb", "กรุณาแนบภาพปก");
-  if (bytes.byteLength > MAX_THUMB_BYTES) throw new HttpError(413, "thumb_too_large", "ภาพปกต้องไม่เกิน 2 MB");
+  if (bytes.byteLength === 0) throw bad("invalid_thumb", "Attach a thumbnail.");
+  if (bytes.byteLength > MAX_THUMB_BYTES) throw new HttpError(413, "thumb_too_large", "The thumbnail must be 2 MB or smaller.");
   const t = sniffImage(bytes);
-  if (!t) throw bad("invalid_thumb", "ภาพปกต้องเป็นไฟล์ PNG, JPEG หรือ WebP");
+  if (!t) throw bad("invalid_thumb", "The thumbnail must be PNG, JPEG or WebP.");
   return t;
 }
 
@@ -51,26 +49,29 @@ export function normalizeTags(raw: string): string[] {
     .map((t) => t.trim().toLowerCase().replace(/\s+/g, "-"))
     .filter(Boolean);
   const uniq = [...new Set(tags)];
-  if (uniq.length > MAX_TAGS) throw bad("invalid_tags", `ใส่แท็กได้ไม่เกิน ${MAX_TAGS} แท็ก`);
+  if (uniq.length > MAX_TAGS) throw bad("invalid_tags", `Use at most ${MAX_TAGS} tags.`);
   for (const t of uniq) {
     if (t.length > MAX_TAG_LEN || /[,<>"'`]/.test(t))
-      throw bad("invalid_tags", `แท็ก "${t.slice(0, 30)}" ยาวเกิน ${MAX_TAG_LEN} ตัวอักษรหรือมีอักขระที่ใช้ไม่ได้`);
+      throw bad("invalid_tags", `Tag "${t.slice(0, 30)}" is longer than ${MAX_TAG_LEN} characters or has invalid characters.`);
   }
   return uniq;
 }
 
-export function validateMeta(fields: { title: string; description: string; price: string }) {
+export const CATEGORIES = ["cute", "nature", "cartoon", "space", "scifi", "abstract"] as const;
+export type Category = (typeof CATEGORIES)[number];
+export function isCategory(v: string): v is Category {
+  return (CATEGORIES as readonly string[]).includes(v);
+}
+
+export function validateMeta(fields: { title: string; description: string; category: string }) {
   const title = fields.title.trim();
-  if (!title) throw bad("invalid_title", "กรุณาตั้งชื่อวอลเปเปอร์");
-  if ([...title].length > MAX_TITLE) throw bad("invalid_title", `ชื่อยาวได้ไม่เกิน ${MAX_TITLE} ตัวอักษร`);
+  if (!title) throw bad("invalid_title", "Give the wallpaper a title.");
+  if ([...title].length > MAX_TITLE || /[\u0000-\u001f]/.test(title)) throw bad("invalid_title", `Titles are limited to ${MAX_TITLE} characters.`);
   const description = fields.description.trim();
-  if ([...description].length > MAX_DESCRIPTION) throw bad("invalid_description", `คำอธิบายยาวได้ไม่เกิน ${MAX_DESCRIPTION} ตัวอักษร`);
-  const priceStr = fields.price.trim() || "0";
-  if (!/^\d+$/.test(priceStr)) throw bad("invalid_price", "ราคาต้องเป็นจำนวนเต็มหน่วยสตางค์");
-  const priceCents = Number(priceStr);
-  if (priceCents !== 0 && priceCents < MIN_PAID_CENTS) throw bad("invalid_price", "ของที่เสียเงินต้องราคาอย่างน้อย 20 บาท");
-  if (priceCents > MAX_PRICE_CENTS) throw bad("invalid_price", "ราคาสูงสุด 10,000 บาท");
-  return { title, description, priceCents };
+  if ([...description].length > MAX_DESCRIPTION) throw bad("invalid_description", `Descriptions are limited to ${MAX_DESCRIPTION} characters.`);
+  const category = fields.category.trim().toLowerCase();
+  if (!isCategory(category)) throw bad("invalid_category", "Choose one of the listed categories.");
+  return { title, description, category };
 }
 
 // ---------------------------------------------------------------------------
@@ -86,25 +87,29 @@ export interface ScanFinding {
   samples: { line: number; excerpt: string }[];
 }
 
-const RULES: { id: string; label: string; severity: ScanFinding["severity"]; re: RegExp }[] = [
-  { id: "fetch", label: "เรียก fetch( — พยายามใช้เครือข่าย", severity: "high", re: /\bfetch\s*\(/g },
-  { id: "xhr", label: "XMLHttpRequest — พยายามใช้เครือข่าย", severity: "high", re: /\bXMLHttpRequest\b/g },
-  { id: "websocket", label: "WebSocket — เปิดการเชื่อมต่อภายนอก", severity: "high", re: /\bWebSocket\b/g },
-  { id: "eventsource", label: "EventSource — รับข้อมูลจากเซิร์ฟเวอร์", severity: "high", re: /\bEventSource\b/g },
-  { id: "beacon", label: "sendBeacon — ส่งข้อมูลออก", severity: "high", re: /\bsendBeacon\b/g },
-  { id: "eval", label: "eval( — รันโค้ดจากข้อความ", severity: "high", re: /\beval\s*\(/g },
-  { id: "function_ctor", label: "new Function( — รันโค้ดจากข้อความ", severity: "high", re: /\bnew\s+Function\s*\(/g },
-  { id: "import_scripts", label: "importScripts — โหลดสคริปต์เพิ่ม", severity: "high", re: /\bimportScripts\b/g },
-  { id: "dynamic_import", label: "import( — โหลดโมดูลแบบไดนามิก", severity: "medium", re: /\bimport\s*\(/g },
-  { id: "string_timer", label: "setTimeout/setInterval ด้วยสตริง", severity: "medium", re: /\bset(?:Timeout|Interval)\s*\(\s*["'`]/g },
-  { id: "cookie", label: "document.cookie", severity: "medium", re: /\bdocument\.cookie\b/g },
-  { id: "window_open", label: "window.open / top.location — เปิดหน้าอื่น", severity: "medium", re: /\bwindow\.open\s*\(|\btop\.location\b/g },
-  { id: "embed", label: "<iframe>/<object>/<embed>/<form>", severity: "medium", re: /<\s*(iframe|object|embed|form)\b/gi },
-  { id: "worker", label: "Worker / ServiceWorker", severity: "low", re: /\bnew\s+(?:Shared)?Worker\s*\(|\bserviceWorker\b/g },
+const RULES: { id: string; severity: ScanFinding["severity"]; re: string }[] = [
+  { id: "fetch", severity: "high", re: String.raw`\bfetch\s*\(` },
+  { id: "xhr", severity: "high", re: String.raw`\bXMLHttpRequest\b` },
+  { id: "websocket", severity: "high", re: String.raw`\bWebSocket\b` },
+  { id: "eventsource", severity: "high", re: String.raw`\bEventSource\b` },
+  { id: "beacon", severity: "high", re: String.raw`\bsendBeacon\b` },
+  { id: "eval", severity: "high", re: String.raw`\beval\s*\(` },
+  { id: "function_ctor", severity: "high", re: String.raw`\bnew\s+Function\s*\(` },
+  { id: "import_scripts", severity: "high", re: String.raw`\bimportScripts\b` },
+  { id: "dynamic_import", severity: "medium", re: String.raw`\bimport\s*\(` },
+  { id: "string_timer", severity: "medium", re: String.raw`\bset(?:Timeout|Interval)\s*\(\s*["'\x60]` },
+  { id: "cookie", severity: "medium", re: String.raw`\bdocument\.cookie\b` },
+  { id: "window_open", severity: "medium", re: String.raw`\bwindow\.open\s*\(|\btop\.location\b` },
+  { id: "embed", severity: "medium", re: String.raw`<\s*(?:iframe|object|embed|form)\b` },
+  { id: "worker", severity: "low", re: String.raw`\bnew\s+(?:Shared)?Worker\s*\(|\bserviceWorker\b` },
+  // External URLs (http/https/ws/protocol-relative); XML namespace ids and bare "//" comments are filtered below.
+  { id: "external_url", severity: "high", re: String.raw`(?:(?:https?|wss?):)?\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}[^\s"'<>)]*` },
 ];
 
-// External URLs (http/https/protocol-relative), excluding XML namespace identifiers.
-const URL_RE = /(?:(?:https?|wss?):)?\/\/[a-z0-9.-]+\.[a-z]{2,}[^\s"'<>)]*/gi;
+// One combined regex => a single pass over the file, which keeps CPU low for large uploads.
+const COMBINED = new RegExp(RULES.map((r, i) => `(?<r${i}>${r.re})`).join("|"), "gi");
+const CASE_SENSITIVE = new Set(["xhr", "websocket", "eventsource", "beacon", "import_scripts", "cookie", "worker", "fetch", "eval", "function_ctor", "dynamic_import", "string_timer", "window_open"]);
+const EXACT = RULES.map((r) => new RegExp(r.re));
 const NAMESPACE_ALLOW = /^(?:https?:)?\/\/(?:www\.)?w3\.org\//i;
 
 function lineIndex(text: string): (index: number) => number {
@@ -129,25 +134,29 @@ function excerpt(text: string, index: number, len: number): string {
 }
 
 export function scanHtml(text: string): ScanFinding[] {
-  const findings: ScanFinding[] = [];
   const lineOf = lineIndex(text);
-  const push = (id: string, label: string, severity: ScanFinding["severity"], matches: RegExpMatchArray[]) => {
-    if (!matches.length) return;
-    findings.push({
-      id,
-      label,
-      severity,
-      count: matches.length,
-      samples: matches.slice(0, 3).map((m) => ({ line: lineOf(m.index!), excerpt: excerpt(text, m.index!, m[0].length) })),
-    });
-  };
-  for (const r of RULES) push(r.id, r.label, r.severity, [...text.matchAll(r.re)]);
-  const urls = [...text.matchAll(URL_RE)].filter((m) => {
-    if (NAMESPACE_ALLOW.test(m[0])) return false;
-    return /^(?:(?:https?|wss?):)?\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}/i.test(m[0]) && (/^(?:https?|wss?):/i.test(m[0]) || isUrlContext(text, m.index!));
-  });
-  push("external_url", "URL ภายนอก", "high", urls);
-  return findings;
+  const hits = new Map<number, { count: number; samples: { line: number; excerpt: string }[] }>();
+  for (const m of text.matchAll(COMBINED)) {
+    const g = m.groups!;
+    let ri = -1;
+    for (let i = 0; i < RULES.length; i++) if (g[`r${i}`] !== undefined) { ri = i; break; }
+    if (ri < 0) continue;
+    const rule = RULES[ri];
+    const s = m[0];
+    // JS identifiers are case-sensitive; the combined regex is not.
+    if (CASE_SENSITIVE.has(rule.id) && !EXACT[ri].test(s)) continue;
+    if (rule.id === "external_url") {
+      if (NAMESPACE_ALLOW.test(s)) continue;
+      if (!/^(?:https?|wss?):/i.test(s) && !isUrlContext(text, m.index!)) continue;
+    }
+    let h = hits.get(ri);
+    if (!h) hits.set(ri, (h = { count: 0, samples: [] }));
+    h.count++;
+    if (h.samples.length < 3) h.samples.push({ line: lineOf(m.index!), excerpt: excerpt(text, m.index!, s.length) });
+  }
+  return [...hits.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([ri, h]) => ({ id: RULES[ri].id, label: RULES[ri].id, severity: RULES[ri].severity, count: h.count, samples: h.samples }));
 }
 
 function isUrlContext(text: string, index: number): boolean {

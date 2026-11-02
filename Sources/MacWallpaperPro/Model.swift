@@ -25,17 +25,16 @@ struct RGBA: Codable, Equatable {
 // MARK: - Enums
 
 enum WallpaperMode: String, Codable, CaseIterable, Identifiable {
-    case off, interactive, installed, preset, shader, video, web
+    case off, interactive, installed, preset, video, web
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .off: "ปิด"
+        case .off: tr("Off")
         case .interactive: "Nebula"
-        case .installed: "จาก Community"
-        case .preset: "สไตล์สำเร็จรูป"
-        case .shader: "โค้ดของคุณ"
-        case .video: "วิดีโอ"
-        case .web: "เว็บไซต์"
+        case .installed: tr("From Community")
+        case .preset: tr("Preset")
+        case .video: tr("Video")
+        case .web: tr("Website")
         }
     }
 }
@@ -51,11 +50,11 @@ enum ClockPosition: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .center: "กลางจอ"
-        case .topLeft: "มุมซ้ายบน"
-        case .topRight: "มุมขวาบน"
-        case .bottomLeft: "มุมซ้ายล่าง"
-        case .bottomRight: "มุมขวาล่าง"
+        case .center: tr("Center")
+        case .topLeft: tr("Top left")
+        case .topRight: tr("Top right")
+        case .bottomLeft: tr("Bottom left")
+        case .bottomRight: tr("Bottom right")
         }
     }
     var alignment: Alignment {
@@ -81,14 +80,12 @@ struct Config: Codable, Equatable {
     var wallpaperMode: WallpaperMode = .interactive
     var lastActiveMode: WallpaperMode = .interactive
     var installedID = ""
-    var communityURL = "http://localhost:8787"
     var preset: WallpaperPreset = .aurora
     var color1 = RGBA(0.20, 0.95, 0.70)
     var color2 = RGBA(0.55, 0.25, 1.00)
     var color3 = RGBA(0.03, 0.02, 0.08)
     var speed = 1.0
     var renderScale = 1.0
-    var customShader = Shaders.defaultCustom
     var videoPath = ""
     var webURL = "https://"
     var showClock = true
@@ -142,6 +139,10 @@ final class Store: ObservableObject {
               var base = try? JSONSerialization.jsonObject(with: defData) as? [String: Any]
         else { return def }
         base.merge(saved) { _, new in new }
+        // โหมด shader ที่เขียนเองถูกถอดออกแล้ว → กลับไปใช้ Nebula
+        for k in ["wallpaperMode", "lastActiveMode"] where base[k] as? String == "shader" {
+            base[k] = WallpaperMode.interactive.rawValue
+        }
         // v2: เลิกใช้ Dock custom และเปลี่ยน wallpaper เริ่มต้นเป็น Interactive
         if (saved["configVersion"] as? Int ?? 1) < 2 {
             base["wallpaperMode"] = WallpaperMode.interactive.rawValue

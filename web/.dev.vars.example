@@ -1,6 +1,15 @@
 # Copy to .dev.vars (gitignored). Never commit real values.
+# "development" enables the dev-only sign-in at /signin (never set this in production).
+ENVIRONMENT=development
 SIGNING_KEY_PKCS8=<base64 PKCS#8 DER Ed25519 private key>
-# Stripe test-mode keys (prefer a restricted key rk_test_...). Leave empty to disable payments locally.
-STRIPE_SECRET_KEY=
-STRIPE_WEBHOOK_SECRET=
 ADMIN_EMAILS=admin@example.com
+# Optional: real OAuth apps for local testing (callback http://localhost:8787/auth/<provider>/callback).
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+# Optional: test the ad layout locally with a fake publisher id.
+# ADSENSE_CLIENT=ca-pub-0000000000000000
+# ADSENSE_SLOT_BROWSE=1111111111
+# ADSENSE_SLOT_DETAIL=2222222222
+# ADSENSE_SLOT_FOOTER=3333333333

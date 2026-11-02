@@ -121,7 +121,7 @@ final class WallpaperManager {
         let cfg = Store.shared.config
         var image: NSImage?
         switch cfg.wallpaperMode {
-        case .interactive, .installed, .preset, .shader, .web:
+        case .interactive, .installed, .preset, .web:
             if let wv = webViews.allObjects.first {
                 image = try? await wv.takeSnapshot(configuration: nil)
             }
@@ -132,11 +132,11 @@ final class WallpaperManager {
                 image = NSImage(cgImage: cg, size: .zero)
             }
         case .off:
-            return SnapshotResult(success: false, path: nil, message: "ภาพพื้นหลังเคลื่อนไหวปิดอยู่ เปิดก่อนแล้วลองอีกครั้ง")
+            return SnapshotResult(success: false, path: nil, message: tr("Live wallpaper is off. Turn it on and try again."))
         }
         guard let image, let tiff = image.tiffRepresentation,
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
-        else { return SnapshotResult(success: false, path: nil, message: "บันทึกภาพไม่สำเร็จ ลองใหม่อีกครั้ง") }
+        else { return SnapshotResult(success: false, path: nil, message: tr("Couldn’t capture the image. Try again.")) }
 
         let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Pictures/MacWallpaperPro")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -147,7 +147,7 @@ final class WallpaperManager {
             for s in NSScreen.screens { try NSWorkspace.shared.setDesktopImageURL(url, for: s, options: [:]) }
             return SnapshotResult(success: true, path: url.path, message: "")
         } catch {
-            return SnapshotResult(success: false, path: nil, message: "ตั้งภาพไม่สำเร็จ: \(error.localizedDescription)")
+            return SnapshotResult(success: false, path: nil, message: tr("Couldn’t set the image: %@", error.localizedDescription))
         }
     }
 }
@@ -172,15 +172,12 @@ struct WallpaperRoot: View {
             case .installed:
                 // ไม่มีกฎบล็อก network = ไม่โหลดของจาก Community เด็ดขาด
                 if WallpaperSandbox.ruleList != nil, let w = Community.shared.installedWallpaper(c.installedID) {
-                    WebWallpaper(source: .localHTML(w.indexURL), params: Shaders.params(c), offline: true)
+                    WebWallpaper(source: .localHTML(w.indexURL), params: Shaders.speedOnly(c), offline: true)
                 } else {
                     Color.black
                 }
             case .preset:
                 WebWallpaper(source: .html(Shaders.html(fragment: Shaders.source(for: c.preset), scale: c.renderScale)),
-                             params: Shaders.params(c))
-            case .shader:
-                WebWallpaper(source: .html(Shaders.html(fragment: c.customShader, scale: c.renderScale)),
                              params: Shaders.params(c))
             case .video:
                 if c.videoPath.isEmpty {
@@ -198,6 +195,7 @@ struct WallpaperRoot: View {
             if c.showClock { ClockWidget(cfg: c) }
         }
         .ignoresSafeArea()
+        .localized()
     }
 
     static func resolve(_ s: String) -> URL? {
@@ -215,7 +213,7 @@ struct ClockWidget: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { ctx in
             VStack(alignment: horizontal, spacing: 4) {
-                Text(ctx.date, format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+                Text(ctx.date, format: .dateTime.hour(.defaultDigits(amPM: .abbreviated)).minute(.twoDigits))
                     .font(cfg.font(cfg.clockSize, .semibold))
                     .monospacedDigit()
                 Text(ctx.date, format: .dateTime.weekday(.wide).day().month(.wide))

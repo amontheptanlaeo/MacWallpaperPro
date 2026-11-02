@@ -3,15 +3,19 @@
   "name": "macwallpaperpro-web",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-22",
-  "compatibility_flags": ["nodejs_compat"],
 
-  // Static site (landing + community UI). The Worker runs first only for dynamic paths.
+  // Production hostname (Workers custom domain on the elizos.com zone). Local dev keeps using localhost:8787.
+  "routes": [{ "pattern": "macwallpaper.elizos.com", "custom_domain": true }],
+  "workers_dev": false,
+
+  // Static files (fonts, CSS, JS, i18n). Every HTML page is rendered by the Worker so it can pick the
+  // language, set <html lang dir> and choose the right CSP. Static files skip the Worker entirely.
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "html_handling": "drop-trailing-slash",
-    "not_found_handling": "404-page",
-    "run_worker_first": ["/api/*", "/preview/*", "/download", "/app/*", "/community/w/*"]
+    "html_handling": "none",
+    "not_found_handling": "none",
+    "run_worker_first": ["/*", "!/assets/*", "!/i18n/*"]
   },
 
   "d1_databases": [
@@ -19,7 +23,7 @@
       "binding": "DB",
       "database_name": "macwallpaperpro",
       // Placeholder for local dev. Replace with the real id after `wrangler d1 create macwallpaperpro`.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "daf9591b-c3dc-4c44-95b9-b4edd6aba05c",
       "migrations_dir": "./migrations"
     }
   ],
@@ -30,12 +34,19 @@
   ],
 
   "vars": {
-    "PLATFORM_FEE_PERCENT": "20",
-    "ADMIN_EMAILS": "",
-    "STRIPE_API_VERSION": "2026-09-30.endive",
-    "STRIPE_CONNECT_COUNTRY": "th",
+    // "development" enables the dev-only sign-in. Override in .dev.vars for local work; never in production.
+    "ENVIRONMENT": "production",
+    "SITE_URL": "https://macwallpaper.elizos.com",
     // Optional extra allowed Origins for state-changing requests (comma separated).
-    "ALLOWED_ORIGINS": ""
+    "ALLOWED_ORIGINS": "",
+    // Google AdSense. Leave empty to show no ads at all (no ad markup, no ad CSP, no consent banner).
+    "ADSENSE_CLIENT": "",
+    "ADSENSE_SLOT_BROWSE": "",
+    "ADSENSE_SLOT_DETAIL": "",
+    "ADSENSE_SLOT_FOOTER": "",
+    // OAuth client ids are public; the secrets are set with `wrangler secret put`.
+    "GOOGLE_CLIENT_ID": "",
+    "GITHUB_CLIENT_ID": "Ov23li3c8m9nJ6YHmljr"
   },
 
   "observability": { "enabled": true, "head_sampling_rate": 1 }

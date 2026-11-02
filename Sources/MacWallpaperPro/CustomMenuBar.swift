@@ -316,7 +316,7 @@ struct CustomBarView: View {
                 Text(st.now, format: .dateTime.weekday(.abbreviated).day().month(.abbreviated)).font(c.barFont())
             }
             if c.barShowClock {
-                Text(st.now, format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+                Text(st.now, format: .dateTime.hour(.defaultDigits(amPM: .abbreviated)).minute(.twoDigits))
                     .font(c.barFont(.semibold)).monospacedDigit()
             }
         }
@@ -351,7 +351,7 @@ struct CustomBarView: View {
         case .other: "network"
         }
         if st.net == .offline {
-            item(symbol, "ออฟไลน์", c)
+            item(symbol, tr("Offline"), c)
         } else {
             item(symbol, "↓ " + BarStats.rate(st.downRate), c)
         }

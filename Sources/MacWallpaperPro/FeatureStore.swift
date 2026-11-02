@@ -53,6 +53,7 @@ struct HotKeyCombo: Codable, Equatable, Hashable {
 
     /// แปลง key code เป็นตัวอักษรตามแป้นพิมพ์ที่ใช้อยู่ (ใช้ layout ASCII เพื่อไม่ให้ขึ้นเป็นภาษาไทย)
     static func keyName(_ code: Int) -> String {
+        if code == kVK_Space { return tr("Space") }
         if let s = special[code] { return s }
         guard let src = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
               let ptr = TISGetInputSourceProperty(src, kTISPropertyUnicodeKeyLayoutData)
@@ -81,18 +82,18 @@ enum SnapAction: String, Codable, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .leftHalf: "ครึ่งซ้าย"
-        case .rightHalf: "ครึ่งขวา"
-        case .topHalf: "ครึ่งบน"
-        case .bottomHalf: "ครึ่งล่าง"
-        case .topLeft: "มุมซ้ายบน"
-        case .topRight: "มุมขวาบน"
-        case .bottomLeft: "มุมซ้ายล่าง"
-        case .bottomRight: "มุมขวาล่าง"
-        case .maximize: "เต็มพื้นที่"
-        case .almostMaximize: "เกือบเต็ม"
-        case .center: "กึ่งกลางจอ"
-        case .nextDisplay: "ย้ายไปจอถัดไป"
+        case .leftHalf: tr("Left half")
+        case .rightHalf: tr("Right half")
+        case .topHalf: tr("Top half")
+        case .bottomHalf: tr("Bottom half")
+        case .topLeft: tr("Top left")
+        case .topRight: tr("Top right")
+        case .bottomLeft: tr("Bottom left")
+        case .bottomRight: tr("Bottom right")
+        case .maximize: tr("Maximize")
+        case .almostMaximize: tr("Almost maximize")
+        case .center: tr("Center")
+        case .nextDisplay: tr("Next display")
         }
     }
 

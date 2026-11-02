@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ocean Sunset</title>
+<!--
+  Ocean Sunset - MacWallpaperPro community wallpaper (nature)
+  Scene: single-pass WebGL. Golden-hour sky with lit cloud strata, perspective ocean
+  with analytic wave normals, sky/sun reflection and a shimmering glitter path.
+  Cursor: shifts the sun (light) and parallax. Click: ripple on the water + a few birds.
+  window.setP({c1: sun/warm light, c2: upper sky, c3: water, speed})
+-->
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#2a1f4a linear-gradient(#1e1b48,#a8476a 45%,#ffb36b 58%,#1b1a40 60%,#0e0d26)}
+  canvas{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(() => {
+'use strict';
+const P = { c1:[1.0,0.62,0.30], c2:[0.16,0.14,0.38], c3:[0.08,0.09,0.20], speed:1 };
+window.setP = o => { if(!o) return; for (const k of ['c1','c2','c3']) if (Array.isArray(o[k]) && o[k].length>=3) P[k]=o[k].slice(0,3); if (typeof o.speed==='number' && isFinite(o.speed)) P.speed=Math.max(0,Math.min(4,o.speed)); };
+const RM = matchMedia('(prefers-reduced-motion: reduce)');
+const cv = document.getElementById('c');
+const gl = cv.getContext('webgl', { antialias:false, alpha:false, depth:false, stencil:false, powerPreference:'low-power' });
+if (!gl) return;
+const NR=6, NB=14;
+const VS=`attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}`;
+const FS=`precision highp float;
+uniform vec2 R; uniform float T; uniform vec2 M; uniform vec2 SUN;
+uniform vec3 C1,C2,C3;
+uniform vec4 RP[${NR}];   // ripple: plane x, plane z, start time, amp
+uniform vec4 BD[${NB}];   // bird: x, y, flap phase, scale (0 = off)
+#define HY -.14
+float h2(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+float ns(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+  return mix(mix(h2(i),h2(i+vec2(1,0)),f.x),mix(h2(i+vec2(0,1)),h2(i+vec2(1,1)),f.x),f.y);}
+float fbm(vec2 p,int oc){float v=0.,a=.5;for(int i=0;i<5;i++){if(i>=oc)break;v+=a*ns(p);p=p*2.02+vec2(13.7,7.1);a*=.5;}return v;}
+vec3 skyGrad(float y,float x){
+  float t=clamp((y-HY)/.75,0.,1.);
+  vec3 hz=mix(C1,vec3(1.,.93,.7),.55);          // hot horizon
+  vec3 c=mix(hz,C1*vec3(1.,.7,.62),smoothstep(.0,.12,t));
+  c=mix(c,vec3(.62,.24,.42)*(C1.r*.4+.6),smoothstep(.08,.38,t));
+  c=mix(c,C2,smoothstep(.3,.95,t));
+  float sd=length((vec2(x,y)-SUN)*vec2(.55,1.));
+  c+=C1*exp(-sd*3.)*.45+mix(C1,vec3(1.),.5)*exp(-sd*9.)*.4;
+  return c;
+}
+float cloudD(vec2 p,float k){
+  float b1=exp(-pow((p.y-.10)/.05,2.)), b2=exp(-pow((p.y-.25)/.08,2.)), b3=exp(-pow((p.y-.42)/.1,2.));
+  float band=b1*.9+b2+b3*.8;
+  float n=fbm(vec2(p.x*1.1+T*.006+k,p.y*5.5),5);
+  float n2=fbm(vec2(p.x*.5-T*.003,p.y*2.),2);
+  return smoothstep(.26,.56,n*band*(.8+.6*n2));
+}
+vec4 clouds(vec2 p){
+  float d=cloudD(p,0.);
+  if(d<.001) return vec4(0.);
+  vec2 ts=normalize(SUN-p);
+  float dl=cloudD(p+ts*.025,0.);
+  float lit=clamp((d-dl)*5.+.15,0.,1.);
+  float sd=length((p-SUN)*vec2(.5,1.));
+  vec3 dark=mix(vec3(.36,.12,.30),C2*1.1,smoothstep(.1,.45,p.y));
+  vec3 hot=mix(C1*vec3(1.5,1.2,1.),vec3(1.2,.5,.55),smoothstep(.05,.4,p.y));
+  vec3 c=mix(dark,hot,lit*(.55+.9*exp(-sd*1.5)));
+  c+=mix(C1,vec3(1.),.4)*pow(lit,3.)*exp(-sd*3.5)*.8;
+  return vec4(c,min(1.,d*1.1));
+}
+vec3 sky(vec2 p){
+  vec3 c=skyGrad(p.y,p.x);
+  float sd=length(p-SUN);
+  c=mix(c,mix(C1,vec3(1.,.95,.8),.75)*3.2,smoothstep(.056,.052,sd));
+  c+=mix(C1,vec3(1.),.4)*exp(-sd*22.)*.8;
+  vec4 cl=clouds(p+vec2(M.x*.02*(p.y-HY),0.));
+  c=mix(c,cl.rgb,cl.a);
+  return c;
+}
+// waves: height derivative (dh/dx,dh/dz)
+vec2 waves(vec2 w,float z){
+  vec2 g=vec2(0.);
+  float amp=.032, fr=1.3;
+  vec2 dir=vec2(.3,1.);
+  for(int i=0;i<8;i++){
+    float fi=float(i);
+    vec2 d=normalize(dir);
+    float ph=dot(d,w)*fr+T*(1.1+fi*.35)*sqrt(fr);
+    float fade=1./(1.+z*fr*.012);
+    g+=d*cos(ph)*amp*fr*fade;
+    fr*=1.7; amp*=.66; dir=vec2(dir.y*1.3-dir.x*.4,dir.x+dir.y*.2+.5*sin(fi*2.3));
+  }
+  for(int i=0;i<${NR};i++){
+    vec4 r=RP[i]; if(r.w<=0.)continue;
+    float age=T-r.z; vec2 dd=w-r.xy; float l=length(dd)+1e-3;
+    float front=age*2.2; float e=exp(-pow((l-front)/.8,2.))*exp(-age*.35)*r.w;
+    g+=dd/l*cos((l-front)*5.)*e*.6;
+  }
+  return g;
+}
+float bird(vec2 p,vec4 b){
+  vec2 q=(p-b.xy)/b.w; if(dot(q,q)>4.)return 0.;
+  float f=sin(b.z); q.x=abs(q.x);
+  vec2 a=vec2(0.,0.), m=vec2(.45,.12+.35*f), t=vec2(1.,-.05+.6*f);
+  vec2 pa=q-a,ba=m-a; float h=clamp(dot(pa,ba)/dot(ba,ba),0.,1.); float d1=length(pa-ba*h);
+  pa=q-m; ba=t-m; h=clamp(dot(pa,ba)/dot(ba,ba),0.,1.); float d2=length(pa-ba*h);
+  float th=mix(.09,.03,clamp(q.x,0.,1.));
+  float d=min(d1,d2)-th; d=min(d,length(q*vec2(1.6,1.))-.1);
+  return smoothstep(1.5/(R.y*b.w),0.,d);
+}
+vec4 island(vec2 p,float hy,float sf){
+  float AR=R.x/R.y; float ix=p.x+AR*.5;
+  float ih=hy+.055*exp(-pow((ix-.25)/.22,2.))+.03*exp(-pow((ix-.55)/.18,2.))+.008*(fbm(vec2(ix*18.,1.),3)-.5)+.004;
+  float isl=smoothstep(ih+sf,ih-sf,p.y)*smoothstep(.95,.7,ix)*step(hy-.002,p.y);
+  vec3 ic=mix(vec3(.24,.10,.24),mix(C1,vec3(1.,.8,.7),.3)*.8,exp(-max(p.y-hy,0.)*30.)*.55);
+  return vec4(ic,isl*.92);
+}
+void main(){
+  vec2 fc=gl_FragCoord.xy; vec2 p=(fc-.5*R)/R.y;
+  p.x+=M.x*.01;
+  vec3 col;
+  float hy=HY+M.y*.006;
+  if(p.y>hy){
+    col=sky(p);
+    // horizon haze
+    col=mix(col,mix(C1,vec3(1.,.9,.7),.5),exp(-(p.y-hy)*55.)*.5);
+    vec4 il=island(p,hy,.0015);
+    col=mix(col,il.rgb,il.a);
+  } else {
+    float camH=.22;
+    float dy=hy-p.y; float z=camH/dy;
+    vec2 w=vec2(p.x*z+M.x*.3,z+T*.15);
+    vec2 g=waves(w,z);
+    vec3 n=normalize(vec3(-g.x,1.,-g.y));
+    vec3 v=normalize(vec3(p.x,-dy,1.));
+    vec3 r=reflect(v,n); r.y=abs(r.y)+.002;
+    vec2 sp=vec2(r.x/r.z,hy+r.y/r.z);
+    vec3 refl=skyGrad(sp.y,sp.x);
+    vec4 cl=clouds(sp); refl=mix(refl,cl.rgb,cl.a*.85);
+    vec4 il=island(sp,hy,.004+dy*.08); refl=mix(refl,il.rgb*.85,il.a*.75);
+    float fres=.04+.96*pow(1.-max(dot(-v,n),0.),5.);
+    fres=clamp(fres*1.25+.06,0.,1.);
+    vec3 deep=C3*(1.+1.2*smoothstep(.4,0.,dy))+C1*.04;
+    col=mix(deep,refl,fres);
+    // sun glitter
+    vec3 sdir=normalize(vec3(SUN.x,SUN.y-hy+.02,1.));
+    float sg=max(dot(r,sdir),0.);
+    float glit=pow(sg,900.)*16.+pow(sg,120.)*.9;
+    float col2=exp(-pow((p.x-SUN.x)/(.05+dy*.9),2.));
+    col+=mix(C1,vec3(1.,.95,.8),.6)*glit*(.4+col2);
+    col+=C1*col2*exp(-dy*5.)*.12;
+    // horizon softening
+    col=mix(col,mix(C1,vec3(1.,.85,.7),.4)*.85,exp(-dy*70.)*.6);
+  }
+  // birds
+  float bs=0.;
+  for(int i=0;i<${NB};i++){vec4 b=BD[i]; if(b.w>0.) bs=max(bs,bird(p,b));}
+  col=mix(col,vec3(.12,.06,.12),bs*.92);
+  vec2 uv=fc/R;
+  col*=mix(.7,1.,smoothstep(1.3,.35,length((uv-.5)*vec2(1.,1.2))));
+  col=1.-exp(-col*1.25);
+  col=pow(col,vec3(1.04));
+  col+=(h2(fc+fract(T))-.5)/255.;
+  gl_FragColor=vec4(col,1.);
+}`;
+function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(o));return o;}
+const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,VS));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,FS));gl.linkProgram(pr);
+if(!gl.getProgramParameter(pr,gl.LINK_STATUS))console.error(gl.getProgramInfoLog(pr));
+gl.useProgram(pr);
+const qb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,qb);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+const aL=gl.getAttribLocation(pr,'a');gl.enableVertexAttribArray(aL);gl.vertexAttribPointer(aL,2,gl.FLOAT,false,0,0);
+const U=n=>gl.getUniformLocation(pr,n);
+const uR=U('R'),uT=U('T'),uM=U('M'),uS=U('SUN'),uC1=U('C1'),uC2=U('C2'),uC3=U('C3'),uRP=U('RP'),uBD=U('BD');
+const rp=new Float32Array(NR*4), bd=new Float32Array(NB*4);
+// birds state
+const bx=new Float32Array(NB),by=new Float32Array(NB),bvx=new Float32Array(NB),bvy=new Float32Array(NB),bph=new Float32Array(NB),bsz=new Float32Array(NB),bon=new Uint8Array(NB),bfr=new Float32Array(NB);
+let W=innerWidth,H=innerHeight,S=1,T=0,last=performance.now(),now=0,ri=0,bi=0;
+const HY=-.14;
+function toP(x,y){return [(x-W/2)/H,(H/2-y)/H];}
+function addBird(x,y,dir,sz){const i=bi;bi=(bi+1)%NB;bx[i]=x;by[i]=y;bvx[i]=dir*(.05+Math.random()*.03);bvy[i]=.01+Math.random()*.02;bph[i]=Math.random()*6;bsz[i]=sz;bfr[i]=7+Math.random()*3;bon[i]=1;}
+function ripple(px,py){
+  let plx,plz; const camH=.22; const dy=py<HY-.02?HY-py:.06; plz=camH/dy; plx=px*plz;
+  rp[ri*4]=plx+mouse.px*.3;rp[ri*4+1]=plz+T*.15;rp[ri*4+2]=T;rp[ri*4+3]=1.;ri=(ri+1)%NR;
+}
+const mouse={x:W/2,y:H/2,last:-1e9,px:0,py:0};
+addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;mouse.last=now;});
+addEventListener('mousedown',e=>{
+  mouse.last=now;const [px,py]=toP(e.clientX,e.clientY);ripple(px,py);
+  const dir=px<0.?-1:1;const n=3+(Math.random()*3|0);const y0=Math.max(py,HY+.04);
+  for(let k=0;k<n;k++)addBird(px+(Math.random()-.5)*.1-dir*k*.03,y0+(Math.random()-.2)*.05+k*.012,dir,.018+Math.random()*.012);
+});
+function resize(){W=innerWidth;H=innerHeight;const dpr=Math.min(devicePixelRatio||1,1.5);let w=W*dpr,h=H*dpr;const s=Math.min(1,Math.sqrt(2.4e6/(w*h)));S=dpr*s;cv.width=Math.max(1,w*s|0);cv.height=Math.max(1,h*s|0);gl.viewport(0,0,cv.width,cv.height);}
+addEventListener('resize',resize);resize();
+let nextAmb=3;
+function frame(t){
+  requestAnimationFrame(frame);
+  if(document.hidden){last=t;return;}
+  let dt=Math.min(.05,Math.max(0,(t-last)/1000));last=t;now=t/1000;
+  dt*=P.speed*(RM.matches?.2:1);T+=dt;
+  const idle=now-mouse.last>4;
+  const tx=idle?Math.sin(T*.05)*.4:(mouse.x/W*2-1), ty=idle?Math.sin(T*.037)*.3:(mouse.y/H*2-1);
+  const k=Math.min(1,dt*1.2+.003);mouse.px+=(tx-mouse.px)*k;mouse.py+=(ty-mouse.py)*k;
+  // ambient birds occasionally
+  if(T>nextAmb){nextAmb=T+14+Math.random()*16;const dir=Math.random()<.5?-1:1;const AR=W/H;const y=.05+Math.random()*.2;
+    for(let j=0;j<2+(Math.random()*2|0);j++)addBird(-dir*(AR*.5+.05+j*.04),y+j*.015,dir,.011+Math.random()*.004);}
+  for(let i=0;i<NB;i++){const o=i*4;
+    if(!bon[i]){bd[o+3]=0;continue;}
+    bph[i]+=dt*bfr[i];bx[i]+=bvx[i]*dt;by[i]+=bvy[i]*dt;bvy[i]*=Math.exp(-dt*.5);
+    if(Math.abs(bx[i])>W/H*.5+.15||by[i]>.7)bon[i]=0;
+    bd[o]=bx[i];bd[o+1]=by[i]+Math.sin(bph[i])*.002;bd[o+2]=bph[i];bd[o+3]=bon[i]?bsz[i]:0;}
+  for(let i=0;i<NR;i++){if(rp[i*4+3]>0&&T-rp[i*4+2]>14)rp[i*4+3]=0;}
+  gl.uniform2f(uR,cv.width,cv.height);gl.uniform1f(uT,T);gl.uniform2f(uM,mouse.px,-mouse.py);
+  gl.uniform2f(uS,.16+mouse.px*.05,-.05-mouse.py*.03);
+  gl.uniform3fv(uC1,P.c1);gl.uniform3fv(uC2,P.c2);gl.uniform3fv(uC3,P.c3);
+  gl.uniform4fv(uRP,rp);gl.uniform4fv(uBD,bd);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

@@ -33,7 +33,7 @@ final class MenuBarHider: NSObject, ObservableObject {
             b.target = self
             b.action = #selector(clicked(_:))
             b.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            b.toolTip = "แสดงหรือซ่อนไอคอนบนแถบเมนู"
+            b.toolTip = tr("Show or hide menu bar icons")
         }
         let s = NSStatusBar.system.statusItem(withLength: Self.separatorLength)
         s.autosaveName = "MacWallpaperPro.hiderSeparator"
@@ -41,7 +41,7 @@ final class MenuBarHider: NSObject, ObservableObject {
         if let b = s.button {
             b.image = Self.separatorImage
             b.appearsDisabled = true
-            b.toolTip = "ไอคอนทางซ้ายของเส้นนี้จะถูกซ่อน (กด ⌘ ค้างแล้วลากเพื่อจัดเรียง)"
+            b.toolTip = tr("Icons to the left of this line are hidden. Hold ⌘ and drag to rearrange.")
         }
         toggle = t
         separator = s
@@ -90,17 +90,20 @@ final class MenuBarHider: NSObject, ObservableObject {
         }
         isHidden = hide
         t.button?.image = NSImage(systemSymbolName: hide ? "chevron.left" : "chevron.right",
-                                  accessibilityDescription: hide ? "แสดงไอคอนที่ซ่อน" : "ซ่อนไอคอน")
+                                  accessibilityDescription: hide ? tr("Show hidden icons") : tr("Hide icons"))
+        // ตั้ง tooltip ใหม่ทุกครั้ง เพื่อให้ตรงกับภาษาปัจจุบัน
+        t.button?.toolTip = tr("Show or hide menu bar icons")
+        s.button?.toolTip = tr("Icons to the left of this line are hidden. Hold ⌘ and drag to rearrange.")
     }
 
     private func showMenu() {
         guard let t = toggle else { return }
         let m = NSMenu()
-        let show = NSMenuItem(title: isHidden ? "แสดงไอคอนที่ซ่อน" : "ซ่อนไอคอน", action: #selector(toggleFromMenu), keyEquivalent: "")
+        let show = NSMenuItem(title: isHidden ? tr("Show hidden icons") : tr("Hide icons"), action: #selector(toggleFromMenu), keyEquivalent: "")
         show.target = self
         m.addItem(show)
         m.addItem(.separator())
-        let settings = NSMenuItem(title: "การตั้งค่า…", action: #selector(openSettings), keyEquivalent: "")
+        let settings = NSMenuItem(title: tr("Settings…"), action: #selector(openSettings), keyEquivalent: "")
         settings.target = self
         m.addItem(settings)
         t.menu = m

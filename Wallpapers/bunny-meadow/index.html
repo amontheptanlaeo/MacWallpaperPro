@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bunny Meadow</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe6f5; }
+  canvas, #grain { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  #grain { pointer-events: none; opacity: .05; mix-blend-mode: soft-light; background-size: 160px 160px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="grain"></div>
+<script>
+(() => {
+'use strict';
+// Params: c1 = sky top, c2 = horizon glow, c3 = meadow green
+const P = { c1: [0.74, 0.86, 0.97], c2: [1.0, 0.88, 0.82], c3: [0.70, 0.88, 0.76], speed: 1 };
+const RM = matchMedia('(prefers-reduced-motion: reduce)');
+let motion = RM.matches ? 0.2 : 1;
+RM.addEventListener && RM.addEventListener('change', e => { motion = e.matches ? 0.2 : 1; });
+let dirty = true;
+window.setP = o => {
+  if (!o) return;
+  for (const k of ['c1', 'c2', 'c3']) if (Array.isArray(o[k]) && o[k].length >= 3) { P[k] = o[k].slice(0, 3); dirty = true; }
+  if (typeof o.speed === 'number' && isFinite(o.speed)) P.speed = Math.max(0, Math.min(4, o.speed));
+};
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1, U = 1;
+const rgb = (c, a = 1, k = 1) => `rgba(${Math.min(255, c[0] * 255 * k) | 0},${Math.min(255, c[1] * 255 * k) | 0},${Math.min(255, c[2] * 255 * k) | 0},${a})`;
+const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const lighten = (c, t) => mix(c, [1, 1, 1], t);
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const mk = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(w)); c.height = Math.max(1, Math.ceil(h)); return c; };
+let seed = 3;
+const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+
+(() => {
+  const g = mk(160, 160), x = g.getContext('2d'), d = x.createImageData(160, 160);
+  for (let i = 0; i < d.data.length; i += 4) { const v = Math.random() * 255 | 0; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255; }
+  x.putImageData(d, 0, 0);
+  document.getElementById('grain').style.backgroundImage = `url(${g.toDataURL()})`;
+})();
+
+// ---------- flower sprites ----------
+const FLOWER_COLS = [
+  { p: [1, 0.80, 0.86], c: [1, 0.90, 0.55] },   // strawberry
+  { p: [1, 1, 0.98], c: [1, 0.86, 0.45] },      // daisy
+  { p: [0.84, 0.78, 1], c: [1, 0.93, 0.70] },   // lavender
+  { p: [1, 0.86, 0.72], c: [1, 0.96, 0.80] },   // peach
+  { p: [1, 0.94, 0.66], c: [1, 0.80, 0.50] },   // butter
+  { p: [0.74, 0.87, 1], c: [1, 0.97, 0.85] },   // baby blue
+];
+function makeFlower(sz, col, type) {
+  const c = mk(sz, sz), x = c.getContext('2d'), m = sz / 2;
+  const R = sz * 0.36;
+  x.shadowColor = 'rgba(160,120,150,.25)'; x.shadowBlur = sz * 0.06; x.shadowOffsetY = sz * 0.02;
+  if (type === 0) { // round-petal daisy
+    const n = 6;
+    for (let i = 0; i < n; i++) {
+      const a = i / n * 6.283 + 0.3, px = m + Math.cos(a) * R * 0.55, py = m + Math.sin(a) * R * 0.55;
+      const g = x.createRadialGradient(px, py, 0, px, py, R * 0.5);
+      g.addColorStop(0, rgb(lighten(col.p, 0.6))); g.addColorStop(1, rgb(col.p));
+      x.fillStyle = g; x.beginPath(); x.arc(px, py, R * 0.46, 0, 6.283); x.fill();
+    }
+  } else if (type === 1) { // many slim petals
+    const n = 11;
+    for (let i = 0; i < n; i++) {
+      const a = i / n * 6.283;
+      x.save(); x.translate(m, m); x.rotate(a);
+      x.fillStyle = rgb(i & 1 ? col.p : lighten(col.p, 0.4));
+      x.beginPath(); x.ellipse(R * 0.55, 0, R * 0.5, R * 0.17, 0, 0, 6.283); x.fill(); x.restore();
+    }
+  } else { // tulip cup
+    x.save(); x.translate(m, m + R * 0.15);
+    const g = x.createLinearGradient(0, -R, 0, R * 0.7);
+    g.addColorStop(0, rgb(lighten(col.p, 0.5))); g.addColorStop(1, rgb(mix(col.p, [0.9, 0.6, 0.7], 0.15)));
+    x.fillStyle = g;
+    x.beginPath(); x.moveTo(-R * 0.62, -R * 0.55);
+    x.lineTo(-R * 0.3, -R * 0.2); x.lineTo(0, -R * 0.75); x.lineTo(R * 0.3, -R * 0.2); x.lineTo(R * 0.62, -R * 0.55);
+    x.quadraticCurveTo(R * 0.72, R * 0.6, 0, R * 0.62); x.quadraticCurveTo(-R * 0.72, R * 0.6, -R * 0.62, -R * 0.55);
+    x.lineJoin = 'round'; x.fill();
+    x.shadowBlur = 0; x.fillStyle = 'rgba(255,255,255,.55)';
+    x.beginPath(); x.ellipse(-R * 0.28, R * 0.0, R * 0.08, R * 0.25, 0.2, 0, 6.283); x.fill();
+    x.restore();
+    return c;
+  }
+  x.shadowBlur = 0; x.shadowOffsetY = 0;
+  const g = x.createRadialGradient(m - R * 0.08, m - R * 0.08, 0, m, m, R * 0.3);
+  g.addColorStop(0, rgb(lighten(col.c, 0.5))); g.addColorStop(1, rgb(col.c));
+  x.fillStyle = g; x.beginPath(); x.arc(m, m, R * 0.27, 0, 6.283); x.fill();
+  x.fillStyle = 'rgba(255,255,255,.7)'; x.beginPath(); x.arc(m - R * 0.09, m - R * 0.1, R * 0.07, 0, 6.283); x.fill();
+  return c;
+}
+function makeSeed(sz) {
+  const c = mk(sz, sz), x = c.getContext('2d'), m = sz / 2;
+  x.strokeStyle = 'rgba(255,255,255,.9)'; x.lineWidth = sz * 0.02; x.lineCap = 'round';
+  const top = m - sz * 0.12;
+  for (let i = 0; i < 13; i++) {
+    const a = -Math.PI / 2 + (i / 12 - 0.5) * 2.4;
+    x.beginPath(); x.moveTo(m, top); x.lineTo(m + Math.cos(a) * sz * 0.3, top + Math.sin(a) * sz * 0.3); x.stroke();
+  }
+  x.beginPath(); x.moveTo(m, top); x.lineTo(m, m + sz * 0.3); x.stroke();
+  x.fillStyle = 'rgba(220,200,170,.9)'; x.beginPath(); x.ellipse(m, m + sz * 0.33, sz * 0.02, sz * 0.05, 0, 0, 6.283); x.fill();
+  const g = x.createRadialGradient(m, top, 0, m, top, sz * 0.35);
+  g.addColorStop(0, 'rgba(255,255,255,.35)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, sz, sz);
+  return c;
+}
+function makePetal(sz, col) {
+  const c = mk(sz, sz), x = c.getContext('2d'), m = sz / 2;
+  const g = x.createLinearGradient(0, m - sz * 0.3, 0, m + sz * 0.3);
+  g.addColorStop(0, rgb(lighten(col, 0.6))); g.addColorStop(1, rgb(col));
+  x.fillStyle = g;
+  x.beginPath(); x.moveTo(m, m + sz * 0.32);
+  x.bezierCurveTo(m - sz * 0.34, m + sz * 0.05, m - sz * 0.2, m - sz * 0.32, m - sz * 0.04, m - sz * 0.3);
+  x.lineTo(m, m - sz * 0.22); x.lineTo(m + sz * 0.04, m - sz * 0.3);
+  x.bezierCurveTo(m + sz * 0.2, m - sz * 0.32, m + sz * 0.34, m + sz * 0.05, m, m + sz * 0.32); x.fill();
+  return c;
+}
+
+// ---------- bunny parts (pre-rendered, unit S) ----------
+const CREAM = [1, 0.985, 0.965], SHADE = [0.95, 0.86, 0.89], LINE = 'rgba(205,160,178,.85)', PINK = [1, 0.74, 0.8];
+let bun = null;
+function part(w, h, draw) {
+  const c = mk(w * DPR, h * DPR), x = c.getContext('2d'); x.scale(DPR, DPR); draw(x, w, h); return { can: c, w, h };
+}
+function blob(x, cx, cy, rx, ry, S, hiX, hiY) {
+  const g = x.createRadialGradient(cx + rx * hiX, cy + ry * hiY, 0, cx, cy, Math.max(rx, ry) * 1.15);
+  g.addColorStop(0, rgb([1, 1, 1])); g.addColorStop(0.55, rgb(CREAM)); g.addColorStop(1, rgb(SHADE));
+  x.fillStyle = g; x.beginPath(); x.ellipse(cx, cy, rx, ry, 0, 0, 6.283); x.fill();
+  x.strokeStyle = LINE; x.lineWidth = S * 0.014; x.stroke();
+}
+function buildBunny(S) {
+  const pad = S * 0.05;
+  const body = part(S * 1.1, S * 0.7, (x, w, h) => {
+    const cx = w / 2, b = h - pad;
+    // chubby mochi body
+    x.beginPath(); x.moveTo(cx - S * 0.38, b - S * 0.04);
+    x.bezierCurveTo(cx - S * 0.47, b - S * 0.3, cx - S * 0.3, b - S * 0.56, cx, b - S * 0.57);
+    x.bezierCurveTo(cx + S * 0.3, b - S * 0.56, cx + S * 0.47, b - S * 0.3, cx + S * 0.38, b - S * 0.04);
+    x.quadraticCurveTo(cx, b + S * 0.03, cx - S * 0.38, b - S * 0.04); x.closePath();
+    const g = x.createRadialGradient(cx - S * 0.1, b - S * 0.4, 0, cx, b - S * 0.2, S * 0.5);
+    g.addColorStop(0, '#fff'); g.addColorStop(0.6, rgb(CREAM)); g.addColorStop(1, rgb(SHADE));
+    x.fillStyle = g; x.fill(); x.strokeStyle = LINE; x.lineWidth = S * 0.014; x.stroke();
+    // fluffy tail peeking out
+    x.save(); x.globalCompositeOperation = 'destination-over';
+    blob(x, cx + S * 0.4, b - S * 0.14, S * 0.1, S * 0.09, S, -0.3, -0.4);
+    x.restore();
+    // tummy
+    const tg = x.createRadialGradient(cx, b - S * 0.2, 0, cx, b - S * 0.2, S * 0.2);
+    tg.addColorStop(0, 'rgba(255,255,255,.95)'); tg.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = tg; x.beginPath(); x.ellipse(cx, b - S * 0.2, S * 0.2, S * 0.2, 0, 0, 6.283); x.fill();
+    // feet
+    for (const s of [-1, 1]) {
+      blob(x, cx + s * S * 0.2, b - S * 0.035, S * 0.12, S * 0.07, S, -0.2, -0.6);
+      x.fillStyle = rgb(PINK, 0.75);
+      x.beginPath(); x.ellipse(cx + s * S * 0.2, b - S * 0.03, S * 0.04, S * 0.028, 0, 0, 6.283); x.fill();
+      for (const t of [-1, 0, 1]) { x.beginPath(); x.arc(cx + s * S * 0.2 + t * S * 0.035, b - S * 0.068, S * 0.012, 0, 6.283); x.fill(); }
+    }
+    // little paws held together
+    for (const s of [-1, 1]) {
+      x.fillStyle = rgb(mix(CREAM, SHADE, 0.25));
+      x.beginPath(); x.ellipse(cx + s * S * 0.075, b - S * 0.34, S * 0.06, S * 0.05, s * 0.3, 0, 6.283); x.fill();
+      x.strokeStyle = LINE; x.lineWidth = S * 0.011; x.stroke();
+    }
+  });
+  const head = part(S * 1.0, S * 0.8, (x, w, h) => {
+    const cx = w / 2, cy = h / 2;
+    x.beginPath();
+    x.moveTo(cx, cy - S * 0.33);
+    x.bezierCurveTo(cx + S * 0.3, cy - S * 0.34, cx + S * 0.44, cy - S * 0.12, cx + S * 0.43, cy + S * 0.06);
+    x.bezierCurveTo(cx + S * 0.42, cy + S * 0.27, cx + S * 0.22, cy + S * 0.33, cx, cy + S * 0.33);
+    x.bezierCurveTo(cx - S * 0.22, cy + S * 0.33, cx - S * 0.42, cy + S * 0.27, cx - S * 0.43, cy + S * 0.06);
+    x.bezierCurveTo(cx - S * 0.44, cy - S * 0.12, cx - S * 0.3, cy - S * 0.34, cx, cy - S * 0.33);
+    const g = x.createRadialGradient(cx - S * 0.12, cy - S * 0.15, 0, cx, cy + S * 0.05, S * 0.5);
+    g.addColorStop(0, '#fff'); g.addColorStop(0.6, rgb(CREAM)); g.addColorStop(1, rgb(SHADE));
+    x.fillStyle = g; x.fill(); x.strokeStyle = LINE; x.lineWidth = S * 0.014; x.stroke();
+    // soft top shine
+    x.fillStyle = 'rgba(255,255,255,.75)'; x.beginPath(); x.ellipse(cx - S * 0.14, cy - S * 0.2, S * 0.1, S * 0.05, -0.3, 0, 6.283); x.fill();
+  });
+  const ear = part(S * 0.32, S * 0.74, (x, w, h) => {
+    const cx = w / 2, b = h - pad;
+    const shape = (k) => {
+      x.beginPath(); x.moveTo(cx - S * 0.1 * k, b);
+      x.bezierCurveTo(cx - S * 0.15 * k, b - S * 0.3, cx - S * 0.11 * k, pad + S * 0.02 * (2 - k), cx, pad + S * 0.02 * (2 - k) * 1.5);
+      x.bezierCurveTo(cx + S * 0.11 * k, pad + S * 0.02 * (2 - k), cx + S * 0.15 * k, b - S * 0.3, cx + S * 0.1 * k, b);
+      x.closePath();
+    };
+    shape(1);
+    const g = x.createLinearGradient(0, pad, 0, b);
+    g.addColorStop(0, '#fff'); g.addColorStop(1, rgb(CREAM));
+    x.fillStyle = g; x.fill(); x.strokeStyle = LINE; x.lineWidth = S * 0.014; x.stroke();
+    shape(0.55);
+    const p = x.createLinearGradient(0, pad, 0, b);
+    p.addColorStop(0, rgb(lighten(PINK, 0.4))); p.addColorStop(1, rgb(PINK));
+    x.fillStyle = p; x.fill();
+  });
+  const flower = makeFlower(Math.ceil(S * 0.26 * DPR), FLOWER_COLS[3], 0);
+  const shadow = part(S * 1.3, S * 0.3, (x, w, h) => {
+    const g = x.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    g.addColorStop(0, 'rgba(90,140,110,.32)'); g.addColorStop(1, 'rgba(90,140,110,0)');
+    x.fillStyle = g; x.setTransform(DPR, 0, 0, DPR * h / w, 0, h * DPR / 2 * (1 - h / w)); x.fillRect(0, 0, w, w);
+  });
+  bun = { S, body, head, ear, flower, shadow };
+}
+
+// ---------- background ----------
+let bgCan = null, frontCan = null;
+const hills = [];
+function hillY(i, x) {
+  const hh = hills[i];
+  return hh.base + Math.sin(x * hh.f1 + hh.p1) * hh.a1 + Math.sin(x * hh.f2 + hh.p2) * hh.a2;
+}
+function softCloud(x, cx, cy, w) {
+  const puffs = [[-0.32, 0.02, 0.2], [-0.1, -0.12, 0.28], [0.18, -0.06, 0.24], [0.38, 0.05, 0.16], [0.02, 0.06, 0.22]];
+  x.save(); x.shadowColor = 'rgba(255,255,255,.9)'; x.shadowBlur = w * 0.08;
+  for (const p of puffs) {
+    const px = cx + p[0] * w, py = cy + p[1] * w, r = p[2] * w;
+    const g = x.createLinearGradient(px, py - r, px, py + r);
+    g.addColorStop(0, 'rgba(255,255,255,.95)'); g.addColorStop(1, rgb(lighten(P.c2, 0.4), 0.9));
+    x.fillStyle = g; x.beginPath(); x.arc(px, py, r, 0, 6.283); x.fill();
+  }
+  x.restore();
+}
+function makeBG() {
+  bgCan = mk(W * DPR, H * DPR);
+  const x = bgCan.getContext('2d'); x.scale(DPR, DPR);
+  const g = x.createLinearGradient(0, 0, 0, H * 0.7);
+  g.addColorStop(0, rgb(P.c1)); g.addColorStop(0.55, rgb(mix(P.c1, [0.97, 0.86, 0.94], 0.6))); g.addColorStop(1, rgb(P.c2));
+  x.fillStyle = g; x.fillRect(0, 0, W, H);
+  // sun glow
+  const sx = W * 0.82, sy = H * 0.2;
+  let r = x.createRadialGradient(sx, sy, 0, sx, sy, H * 0.6);
+  r.addColorStop(0, 'rgba(255,250,225,.95)'); r.addColorStop(0.08, 'rgba(255,246,215,.75)'); r.addColorStop(0.3, 'rgba(255,236,215,.25)'); r.addColorStop(1, 'rgba(255,236,215,0)');
+  x.fillStyle = r; x.fillRect(0, 0, W, H);
+  x.save(); x.shadowColor = 'rgba(255,248,220,1)'; x.shadowBlur = H * 0.05; x.fillStyle = 'rgba(255,253,240,.95)'; x.beginPath(); x.arc(sx, sy, H * 0.042, 0, 6.283); x.fill(); x.restore();
+  // clouds
+  seed = 41;
+  softCloud(x, W * 0.12, H * 0.22, W * 0.13);
+  softCloud(x, W * 0.62, H * 0.34, W * 0.09);
+  softCloud(x, W * 0.95, H * 0.42, W * 0.1);
+  softCloud(x, W * 0.34, H * 0.44, W * 0.07);
+  // hills
+  const cols = [mix(lighten(P.c3, 0.2), [0.82, 0.76, 0.96], 0.6), mix(lighten(P.c3, 0.25), [0.78, 0.9, 0.9], 0.3), lighten(P.c3, 0.1), mix(P.c3, [0.6, 0.84, 0.66], 0.3)];
+  for (let i = 0; i < hills.length; i++) {
+    const c = cols[i];
+    x.beginPath(); x.moveTo(0, H);
+    for (let px = 0; px <= W + 8; px += 8) x.lineTo(px, hillY(i, px));
+    x.lineTo(W, H); x.closePath();
+    const top = hills[i].base - hills[i].a1 - hills[i].a2;
+    const hg = x.createLinearGradient(0, top, 0, top + H * 0.3);
+    hg.addColorStop(0, rgb(lighten(c, 0.35))); hg.addColorStop(1, rgb(c));
+    x.fillStyle = hg; x.fill();
+    // rim light on hill crest
+    x.save(); x.clip();
+    x.strokeStyle = 'rgba(255,255,240,.5)'; x.lineWidth = H * 0.008; x.filter = `blur(${H * 0.004}px)`;
+    x.beginPath(); for (let px = 0; px <= W + 8; px += 8) { const y = hillY(i, px) + H * 0.004; px ? x.lineTo(px, y) : x.moveTo(px, y); } x.stroke();
+    x.restore();
+    // tiny flower dots on the farther hills
+    if (i < 3) {
+      const n = [90, 140, 120][i];
+      for (let k = 0; k < n; k++) {
+        const px = rnd() * W, py = hillY(i, px) + (0.01 + rnd() * 0.14) * H * (0.4 + i * 0.3);
+        if (i + 1 < hills.length && py > hillY(i + 1, px)) continue;
+        const fc = FLOWER_COLS[rnd() * 6 | 0].p;
+        x.fillStyle = rgb(mix(fc, c, 0.25 - i * 0.05), 0.9);
+        x.beginPath(); x.arc(px, py, (1 + i * 0.7 + rnd()) * Math.max(0.8, U), 0, 6.283); x.fill();
+      }
+    }
+  }
+  // horizon haze
+  r = x.createLinearGradient(0, H * 0.5, 0, H * 0.72);
+  r.addColorStop(0, rgb(lighten(P.c2, 0.3), 0)); r.addColorStop(0.5, rgb(lighten(P.c2, 0.3), 0.25)); r.addColorStop(1, rgb(lighten(P.c2, 0.3), 0));
+  x.fillStyle = r; x.fillRect(0, 0, W, H);
+}
+
+// ---------- scene state ----------
+const flowers = [], seeds = [], petals = [], grass = [];
+const flowerCans = [], petalCans = [];
+let seedCan = null;
+const NPET = 90;
+for (let i = 0; i < NPET; i++) petals.push({ on: false, x: 0, y: 0, vx: 0, vy: 0, r: 0, vr: 0, s: 1, life: 0, spr: null, ph: 0 });
+const B = { x: 0, y: 0, S: 100, look: 0, lookV: 0, lookY: 0, hop: -1, hopDur: 0.62, hopH: 0, blink: 0, nextBlink: 2, earL: 0, earR: 0, earLV: 0, earRV: 0, nextTwitch: 3, nextIdleHop: 9, dir: 0, gazeX: 0, gazeY: 0, gazeT: 0, vy: 0 };
+
+function build() {
+  seed = 3;
+  U = Math.min(W, H * 1.6) / 1600;
+  hills.length = 0;
+  hills.push({ base: H * 0.6, a1: H * 0.03, f1: 2.2 / W * 3.14, p1: 1.0, a2: H * 0.012, f2: 7 / W * 3.14, p2: 0.4 });
+  hills.push({ base: H * 0.66, a1: H * 0.035, f1: 1.6 / W * 3.14, p1: 2.6, a2: H * 0.015, f2: 5.2 / W * 3.14, p2: 1.7 });
+  hills.push({ base: H * 0.74, a1: H * 0.03, f1: 1.3 / W * 3.14, p1: 4.4, a2: H * 0.012, f2: 4.3 / W * 3.14, p2: 0.2 });
+  hills.push({ base: H * 0.84, a1: H * 0.025, f1: 1.0 / W * 3.14, p1: 0.9, a2: H * 0.01, f2: 3.1 / W * 3.14, p2: 2.2 });
+  makeBG();
+  seed = 5;
+  flowerCans.length = 0;
+  for (let t = 0; t < 3; t++) for (let c = 0; c < 6; c++) flowerCans.push(makeFlower(96, FLOWER_COLS[c], t));
+  petalCans.length = 0;
+  for (const c of FLOWER_COLS) petalCans.push(makePetal(48, c.p));
+  seedCan = makeSeed(64);
+  // bunny
+  B.S = Math.max(90, H * 0.215);
+  B.x = W * 0.27; B.y = hillY(3, W * 0.27) + H * 0.06;
+  buildBunny(B.S);
+  // flowers: mid layer on hill 2/3, near layer at bottom
+  flowers.length = 0;
+  const addF = (n, layer) => {
+    for (let i = 0; i < n; i++) {
+      const bx = rnd() * W;
+      let by, sc;
+      if (layer === 0) { by = hillY(2, bx) + rnd() * H * 0.08; sc = 0.35 + rnd() * 0.15; if (by > hillY(3, bx)) continue; }
+      else if (layer === 1) { by = hillY(3, bx) + H * (0.01 + rnd() * 0.06); sc = 0.55 + rnd() * 0.25; }
+      else { by = H * (0.97 + rnd() * 0.06); sc = 0.9 + rnd() * 0.5; if (Math.abs(bx - B.x) < B.S * 0.5) continue; }
+      // keep the bunny's spot clear
+      if (layer >= 1 && Math.abs(bx - B.x) < B.S * 0.6 && by < B.y + B.S * 0.15 && layer === 1) continue;
+      const type = rnd() < 0.45 ? 0 : rnd() < 0.6 ? 1 : 2;
+      flowers.push({ bx, by, h: (layer === 2 ? H * (0.07 + rnd() * 0.1) : H * (0.03 + rnd() * 0.04)) * (layer === 0 ? 0.6 : 1), sz: 52 * sc * Math.max(0.7, U),
+        spr: flowerCans[type * 6 + (rnd() * 6 | 0)], ph: rnd() * 6.28, f: 0.7 + rnd() * 0.6, layer, a: 0, va: 0, lean: (rnd() - 0.5) * 0.25, tx: 0, ty: 0 });
+    }
+  };
+  addF(70, 0); addF(80, 1); addF(34, 2);
+  flowers.sort((a, b) => a.by - b.by);
+  // grass tufts in front
+  grass.length = 0;
+  for (let i = 0; i < 46; i++) grass.push({ x: rnd() * W, y: H * (0.97 + rnd() * 0.05), h: H * (0.04 + rnd() * 0.05), ph: rnd() * 6.28, c: rnd(), b: (rnd() - 0.5) * 0.6 });
+  // foreground clover mounds
+  frontCan = mk(W * DPR, H * 0.2 * DPR);
+  { const x = frontCan.getContext('2d'); x.scale(DPR, DPR); const oy = H * 0.8;
+    const base = mix(P.c3, [0.56, 0.8, 0.64], 0.35);
+    for (let pass = 0; pass < 2; pass++) for (let px = -40; px < W + 60; px += H * (0.05 + rnd() * 0.04)) {
+      const r = H * (0.04 + rnd() * 0.03) * (pass ? 0.85 : 1), cy = H * (pass ? 1.0 : 0.975) - oy + rnd() * H * 0.015;
+      const g = x.createLinearGradient(0, cy - r, 0, cy + r);
+      const c = pass ? base : mix(base, [0.7, 0.86, 0.78], 0.3);
+      g.addColorStop(0, rgb(lighten(c, 0.35))); g.addColorStop(0.5, rgb(c)); g.addColorStop(1, rgb(mix(c, [0.45, 0.7, 0.55], 0.3)));
+      x.fillStyle = g; x.beginPath(); x.ellipse(px, cy, r * 1.4, r, 0, 0, 6.283); x.fill();
+      x.strokeStyle = 'rgba(255,255,240,.35)'; x.lineWidth = r * 0.08; x.lineCap = 'round'; x.beginPath(); x.ellipse(px, cy, r * 1.32, r * 0.92, 0, Math.PI * 1.15, Math.PI * 1.6); x.stroke();
+    }
+  }
+  seeds.length = 0;
+  for (let i = 0; i < 22; i++) seeds.push({ x: rnd() * W, y: H * (0.15 + rnd() * 0.7), s: (16 + rnd() * 16) * Math.max(0.7, U), ph: rnd() * 6.28, vx: (12 + rnd() * 18), z: 0.5 + rnd() * 0.5 });
+  dirty = false;
+}
+
+function resize() {
+  DPR = Math.min(1.5, window.devicePixelRatio || 1);
+  W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  build();
+}
+addEventListener('resize', () => { clearTimeout(resize.t); resize.t = setTimeout(resize, 120); });
+
+// ---------- input ----------
+const M = { x: -1e4, y: -1e4, last: -1e9, v: 0 };
+addEventListener('mousemove', e => {
+  if (M.x > -1e3) M.v = Math.min(1, M.v + Math.hypot(e.clientX - M.x, e.clientY - M.y) / 400);
+  M.x = e.clientX; M.y = e.clientY; M.last = performance.now();
+});
+function scatterPetals(x, y, n, up) {
+  let k = 0;
+  for (let i = 0; i < NPET && k < n; i++) {
+    const p = petals[i]; if (p.on) continue; k++;
+    const a = -Math.PI / 2 + (Math.random() - 0.5) * (up ? 2.4 : 6.28), sp = (120 + Math.random() * 260) * Math.max(0.7, U);
+    p.on = true; p.x = x + (Math.random() - 0.5) * 30 * U; p.y = y; p.vx = Math.cos(a) * sp; p.vy = Math.sin(a) * sp;
+    p.r = Math.random() * 6.28; p.vr = (Math.random() - 0.5) * 8; p.s = (10 + Math.random() * 10) * Math.max(0.75, U);
+    p.life = 0; p.spr = petalCans[Math.random() * 6 | 0]; p.ph = Math.random() * 6.28;
+  }
+}
+function hop(big) {
+  if (B.hop >= 0) return;
+  B.hop = 0; B.hopH = B.S * (big ? 0.55 : 0.25); B.hopDur = big ? 0.66 : 0.48;
+}
+addEventListener('mousedown', e => {
+  hop(true);
+  scatterPetals(e.clientX, e.clientY, 18, false);
+});
+
+// ---------- loop ----------
+let last = performance.now(), now = 0;
+function drawImg(spr, x, y, w, h) { ctx.drawImage(spr, x, y, w, h); }
+function frame(t) {
+  requestAnimationFrame(frame);
+  if (document.hidden) { last = t; return; }
+  let rdt = Math.min(0.05, (t - last) / 1000); last = t;
+  if (dirty) build();
+  const k = P.speed * motion, dt = rdt * k; now += dt;
+  M.v *= Math.pow(0.1, rdt);
+  const idle = performance.now() - M.last > 3500;
+  const wind = Math.sin(now * 0.4) * 0.5 + Math.sin(now * 0.13 + 2) * 0.5;
+
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.drawImage(bgCan, 0, 0, W, H);
+
+  // flowers (layers 0,1 behind bunny)
+  const drawFlowers = (layer) => {
+    ctx.strokeStyle = layer === 0 ? rgb(mix(P.c3, [0.5, 0.72, 0.58], 0.3)) : layer === 1 ? rgb(mix(P.c3, [0.42, 0.68, 0.52], 0.5)) : rgb(mix(P.c3, [0.36, 0.62, 0.48], 0.6));
+    ctx.lineWidth = layer === 0 ? 1.2 : layer === 1 ? 2 : 3.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (const f of flowers) {
+      if (f.layer !== layer) continue;
+      // cursor push
+      let tgt = f.lean + Math.sin(now * f.f + f.ph + f.bx * 0.004) * 0.09 + wind * 0.08;
+      if (M.x > -1e3 && layer > 0) { const dx = f.bx - M.x, dy = (f.by - f.h) - M.y, d2 = dx * dx + dy * dy, R = 140 * U; if (d2 < R * R) tgt += (dx > 0 ? 1 : -1) * (1 - Math.sqrt(d2) / R) * (0.35 + M.v * 0.5); }
+      f.va += ((tgt - f.a) * 40 - f.va * 5) * rdt; f.a += f.va * rdt;
+      const sx = Math.sin(f.a) * f.h, sy = Math.cos(f.a) * f.h;
+      f.tx = f.bx + sx; f.ty = f.by - sy;
+      ctx.moveTo(f.bx, f.by); ctx.quadraticCurveTo(f.bx + sx * 0.2, f.by - sy * 0.6, f.tx, f.ty);
+    }
+    ctx.stroke();
+    if (layer > 0) {
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.beginPath();
+      for (const f of flowers) {
+        if (f.layer !== layer) continue;
+        const lx = f.bx + (f.tx - f.bx) * 0.12, ly = f.by - (f.by - f.ty) * 0.35, ls = f.sz * 0.28, sd = f.ph > 3.14 ? 1 : -1;
+        ctx.moveTo(lx, ly); ctx.ellipse(lx + sd * ls * 0.9, ly - ls * 0.25, ls, ls * 0.38, sd * -0.5 + f.a, sd > 0 ? Math.PI : 0, sd > 0 ? Math.PI * 3 : Math.PI * 2);
+      }
+      ctx.fill();
+    }
+    for (const f of flowers) {
+      if (f.layer !== layer) continue;
+      const s = f.sz;
+      ctx.setTransform(DPR * Math.cos(f.a), DPR * Math.sin(f.a), -DPR * Math.sin(f.a), DPR * Math.cos(f.a), f.tx * DPR, f.ty * DPR);
+      ctx.drawImage(f.spr, -s / 2, -s / 2, s, s);
+    }
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  };
+  drawFlowers(0);
+  drawFlowers(1);
+
+  // ---- bunny ----
+  const S = B.S;
+  // gaze target
+  let gx, gy;
+  if (!idle && M.x > -1e3) { gx = M.x; gy = M.y; }
+  else {
+    if (now > B.gazeT) { B.gazeT = now + 2.5 + Math.random() * 3; const sd = seeds[Math.random() * seeds.length | 0]; B.gazeX = Math.random() < 0.5 ? sd.x : B.x + (Math.random() - 0.5) * W * 0.8; B.gazeY = Math.random() < 0.5 ? sd.y : B.y - S * (Math.random() * 2); }
+    gx = B.gazeX; gy = B.gazeY;
+  }
+  const tl = clamp((gx - B.x) / (W * 0.3), -1, 1), tly = clamp((gy - (B.y - S)) / (H * 0.4), -1, 1);
+  B.lookV += ((tl - B.look) * 30 - B.lookV * 8) * rdt; B.look += B.lookV * rdt;
+  B.lookY += (tly - B.lookY) * Math.min(1, rdt * 4);
+  // blink
+  if (now > B.nextBlink) { B.blink = 0.0001; B.nextBlink = now + 2.5 + Math.random() * 3.5; if (Math.random() < 0.2) B.nextBlink = now + 0.35; }
+  if (B.blink > 0) { B.blink += rdt / Math.max(0.3, k) * 1; if (B.blink > 0.16) B.blink = 0; }
+  const eyeOpen = B.blink > 0 ? Math.abs(Math.cos(B.blink / 0.16 * Math.PI)) : 1;
+  // hop
+  let hy = 0, sqx = 1, sqy = 1, vy = 0;
+  if (B.hop >= 0) {
+    B.hop += dt / B.hopDur;
+    const p = B.hop;
+    if (p < 0.18) { const q = p / 0.18; sqy = 1 - 0.14 * Math.sin(q * Math.PI / 2); }
+    else if (p < 0.86) { const q = (p - 0.18) / 0.68; hy = -Math.sin(q * Math.PI) * B.hopH; vy = -Math.cos(q * Math.PI); sqy = 1 + 0.1 * Math.cos(q * Math.PI) * Math.cos(q * Math.PI) * (q < 0.5 ? 1 : 0.6); }
+    else if (p < 1) { const q = (p - 0.86) / 0.14; sqy = 1 - 0.1 * Math.sin(q * Math.PI); }
+    else { B.hop = -1; if (B.hopH > S * 0.4) scatterPetals(B.x, B.y - S * 0.05, 10, true); }
+    if (p > 0.85 && p - dt / B.hopDur <= 0.86 && B.hopH > S * 0.4) scatterPetals(B.x, B.y - S * 0.05, 14, true);
+    sqx = 1 / Math.sqrt(sqy);
+  }
+  if (idle && now > B.nextIdleHop) { B.nextIdleHop = now + 8 + Math.random() * 8; hop(false); }
+  // ears: spring with hop velocity + twitch
+  if (now > B.nextTwitch) { B.nextTwitch = now + 1.8 + Math.random() * 3; if (Math.random() < 0.5) B.earLV -= 9; else B.earRV += 9; }
+  const earBase = 0.2, earT = B.look * 0.12 + vy * 0.25;
+  B.earLV += ((-earBase + earT - vy * 0.3 - B.earL) * 90 - B.earLV * 9) * rdt; B.earL += B.earLV * rdt;
+  B.earRV += ((earBase + earT + vy * 0.3 - B.earR) * 90 - B.earRV * 9) * rdt; B.earR += B.earRV * rdt;
+  const breathe = 1 + Math.sin(now * 2.2) * 0.012;
+
+  // shadow
+  const shS = 1 - Math.min(0.5, -hy / S);
+  ctx.globalAlpha = 0.7 + 0.3 * shS;
+  ctx.drawImage(bun.shadow.can, B.x - bun.shadow.w * shS / 2, B.y - bun.shadow.h / 2, bun.shadow.w * shS, bun.shadow.h);
+  ctx.globalAlpha = 1;
+  ctx.save();
+  ctx.translate(B.x, B.y + hy);
+  ctx.scale(sqx, sqy * breathe);
+  // body
+  ctx.drawImage(bun.body.can, -bun.body.w / 2, -bun.body.h, bun.body.w, bun.body.h);
+  // head group
+  const hx = B.look * S * 0.05, hyy = -S * 0.76 + B.lookY * S * 0.02;
+  ctx.save();
+  ctx.translate(hx, hyy);
+  ctx.rotate(B.look * 0.06);
+  // ears (behind head)
+  const ew = bun.ear.w, eh = bun.ear.h;
+  for (const side of [-1, 1]) {
+    ctx.save();
+    ctx.translate(side * S * 0.15 + B.look * S * 0.03, -S * 0.2);
+    ctx.rotate(side < 0 ? B.earL : B.earR);
+    ctx.drawImage(bun.ear.can, -ew / 2, -eh + S * 0.06, ew, eh);
+    ctx.restore();
+  }
+  ctx.drawImage(bun.head.can, -bun.head.w / 2, -bun.head.h / 2, bun.head.w, bun.head.h);
+  // face (shifted further for a turning feel)
+  const fx = B.look * S * 0.1, fy = B.lookY * S * 0.03 + S * 0.03;
+  const eyeR = S * 0.045;
+  for (const side of [-1, 1]) {
+    const comp = 1 - side * B.look * 0.18;
+    const ex = fx + side * S * 0.155 * comp, ey = fy - S * 0.01;
+    // blush
+    ctx.fillStyle = 'rgba(255,170,190,.5)';
+    ctx.beginPath(); ctx.ellipse(fx + side * S * 0.27 * comp, fy + S * 0.09, S * 0.065, S * 0.035, 0, 0, 6.283); ctx.fill();
+    if (eyeOpen > 0.25) {
+      ctx.fillStyle = '#4b3550';
+      ctx.beginPath(); ctx.ellipse(ex, ey, eyeR * comp, eyeR * 1.25 * eyeOpen, 0, 0, 6.283); ctx.fill();
+      ctx.fillStyle = 'rgba(160,120,200,.55)';
+      ctx.beginPath(); ctx.ellipse(ex, ey + eyeR * 0.6 * eyeOpen, eyeR * 0.6 * comp, eyeR * 0.45 * eyeOpen, 0, 0, 6.283); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(ex - eyeR * 0.32 + B.look * eyeR * 0.15, ey - eyeR * 0.45 * eyeOpen, eyeR * 0.36, 0, 6.283); ctx.fill();
+      ctx.beginPath(); ctx.arc(ex + eyeR * 0.35, ey + eyeR * 0.3 * eyeOpen, eyeR * 0.15, 0, 6.283); ctx.fill();
+    } else {
+      ctx.strokeStyle = '#4b3550'; ctx.lineWidth = S * 0.014; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(ex, ey - eyeR * 0.3, eyeR * 0.9, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+    }
+  }
+  // nose + mouth
+  ctx.fillStyle = '#f59ab0';
+  ctx.beginPath(); ctx.ellipse(fx, fy + S * 0.06, S * 0.024, S * 0.016, 0, 0, 6.283); ctx.fill();
+  ctx.strokeStyle = 'rgba(150,95,115,.8)'; ctx.lineWidth = S * 0.011; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(fx, fy + S * 0.075); ctx.lineTo(fx, fy + S * 0.09);
+  ctx.moveTo(fx - S * 0.03, fy + S * 0.095); ctx.quadraticCurveTo(fx - S * 0.015, fy + S * 0.11, fx, fy + S * 0.09);
+  ctx.quadraticCurveTo(fx + S * 0.015, fy + S * 0.11, fx + S * 0.03, fy + S * 0.095);
+  ctx.stroke();
+  // flower accessory by right ear
+  const fs = S * 0.26;
+  ctx.save(); ctx.translate(S * 0.25 + B.look * S * 0.04, -S * 0.22); ctx.rotate(0.3 + B.earR * 0.5);
+  ctx.drawImage(bun.flower, -fs / 2, -fs / 2, fs, fs); ctx.restore();
+  ctx.restore();
+  ctx.restore();
+
+  // near flowers + grass
+  ctx.drawImage(frontCan, 0, H * 0.8, W, H * 0.2);
+  drawFlowers(2);
+  ctx.fillStyle = rgb(mix(P.c3, [0.5, 0.78, 0.62], 0.4));
+  ctx.beginPath();
+  for (const g of grass) {
+    const sw = g.b + Math.sin(now * 1.3 + g.ph) * 0.12 + wind * 0.1;
+    const tx = g.x + Math.sin(sw) * g.h, ty = g.y - Math.cos(sw) * g.h;
+    const w = g.h * 0.16;
+    ctx.moveTo(g.x - w, g.y); ctx.quadraticCurveTo(g.x - w * 0.6, g.y - g.h * 0.6, tx, ty);
+    ctx.quadraticCurveTo(g.x + w * 0.2 + (tx - g.x) * 0.2, g.y - g.h * 0.45, g.x + w, g.y);
+  }
+  ctx.fill();
+
+  // dandelion seeds
+  for (const s of seeds) {
+    s.x += (s.vx * (0.6 + wind * 0.4) + 6) * U * dt * s.z;
+    s.y += Math.sin(now * 0.7 + s.ph) * 10 * U * dt - 3 * U * dt;
+    if (M.x > -1e3) { const dx = s.x - M.x, dy = s.y - M.y, d2 = dx * dx + dy * dy, R = 120 * U; if (d2 < R * R && d2 > 1) { const f = (1 - Math.sqrt(d2) / R) * 90 * U * rdt * (0.4 + M.v * 2); s.x += dx / Math.sqrt(d2) * f; s.y += dy / Math.sqrt(d2) * f; } }
+    if (s.x > W + 40) { s.x = -40; s.y = H * (0.2 + Math.random() * 0.6); }
+    if (s.y < -40) s.y = H + 30; if (s.y > H + 40) s.y = -30;
+    const r = Math.sin(now * 0.9 + s.ph) * 0.35, z = s.s * s.z;
+    ctx.globalAlpha = 0.55 + s.z * 0.4;
+    ctx.setTransform(DPR * Math.cos(r), DPR * Math.sin(r), -DPR * Math.sin(r), DPR * Math.cos(r), s.x * DPR, s.y * DPR);
+    ctx.drawImage(seedCan, -z, -z, z * 2, z * 2);
+  }
+  // petals
+  for (const p of petals) {
+    if (!p.on) continue;
+    p.life += dt;
+    const dr = Math.pow(0.35, dt);
+    p.vx = p.vx * dr + wind * 12 * U * dt; p.vy = p.vy * dr + 90 * U * dt;
+    if (p.vy > 45 * U) p.vy = 45 * U;
+    p.x += (p.vx + Math.sin(now * 2.5 + p.ph) * 25 * U) * dt; p.y += p.vy * dt; p.r += p.vr * dt;
+    if (p.y > H + 30 || p.life > 7) { p.on = false; continue; }
+    const fl = Math.cos(now * 4 + p.ph);
+    ctx.globalAlpha = Math.min(1, (7 - p.life) * 0.8);
+    ctx.setTransform(DPR * Math.cos(p.r) * fl, DPR * Math.sin(p.r) * fl, -DPR * Math.sin(p.r), DPR * Math.cos(p.r), p.x * DPR, p.y * DPR);
+    ctx.drawImage(p.spr, -p.s, -p.s, p.s * 2, p.s * 2);
+  }
+  ctx.globalAlpha = 1;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+resize();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

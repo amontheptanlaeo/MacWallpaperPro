@@ -14,20 +14,10 @@ struct FeatureSlider: View {
     var unit = "pt"
 
     var body: some View {
-        LabeledContent {
-            HStack {
-                Group {
-                    if let step { Slider(value: $value, in: range, step: step) } else { Slider(value: $value, in: range) }
-                }
-                .frame(minWidth: 140)
-                    .accessibilityLabel(title)
-                Text(unit == "%" ? "\(Int((value * 100).rounded()))%" : "\(Int(value.rounded())) \(unit)")
-                    .monospacedDigit().foregroundStyle(.secondary)
-                    .frame(width: 56, alignment: .trailing)
+        SettingRow(title: title, subtitle: subtitle) {
+            ValueSlider(label: title, value: $value, range: range, step: step) { v in
+                unit == "%" ? "\(Int((v * 100).rounded()))%" : "\(Int(v.rounded())) \(unit)"
             }
-        } label: {
-            Text(title)
-            if let subtitle { Text(subtitle) }
         }
     }
 }
@@ -37,25 +27,31 @@ struct AXPermissionSection: View {
     @ObservedObject private var trust = AXTrust.shared
 
     var body: some View {
-        Section("สิทธิ์การเข้าถึง") {
+        SettingsGroup(title: tr("Accessibility access")) {
             if trust.isTrusted {
-                Label("อนุญาตแล้ว", systemImage: "checkmark.shield.fill")
-                    .foregroundStyle(.green)
+                StatusRow(kind: .ok, title: tr("Allowed"))
             } else {
-                LabeledContent {
-                    Button("เปิดการตั้งค่า…") { trust.openSettings() }
-                        .buttonStyle(.borderedProminent)
-                } label: {
-                    Label {
-                        Text("ยังไม่ได้อนุญาต")
-                        Text("ไปที่ ความเป็นส่วนตัวและความปลอดภัย › การช่วยการเข้าถึง แล้วเปิดสวิตช์ของ MacWallpaperPro")
-                    } icon: {
-                        Image(systemName: "exclamationmark.shield.fill").foregroundStyle(.orange)
-                    }
+                StatusRow(kind: .warning, title: tr("Not allowed yet"),
+                          subtitle: tr("Go to Privacy & Security › Accessibility and turn on MacWallpaperPro.")) {
+                    Button(tr("Open Settings…")) { trust.openSettings() }
+                        .buttonStyle(PrimaryButtonStyle())
                 }
             }
         }
         .onAppear { trust.refresh(); trust.watch() }
+    }
+}
+
+/// แถวเลือกสี
+struct ColorRow: View {
+    let title: String
+    var subtitle: String? = nil
+    let selection: Binding<Color>
+    var supportsOpacity = true
+    var body: some View {
+        SettingRow(title: title, subtitle: subtitle) {
+            ColorPicker(title, selection: selection, supportsOpacity: supportsOpacity).labelsHidden()
+        }
     }
 }
 
@@ -67,65 +63,41 @@ struct BordersPage: View {
 
     var body: some View {
         let c = fs.config
-        Form {
-            Section {
-                Toggle(isOn: $fs.config.borderEnabled) {
-                    Text("แสดงขอบรอบหน้าต่างที่ใช้งานอยู่")
-                    Text("วาดเส้นขอบเรืองแสงรอบหน้าต่างที่กำลังโฟกัส ช่วยให้เห็นชัดว่ากำลังพิมพ์อยู่ในหน้าต่างไหน ขอบจะซ่อนเองเมื่อหน้าต่างเต็มจอ")
-                }
+        SettingsGroup(footer: trust.isTrusted ? nil : tr("Allow accessibility access to track other apps’ windows.")) {
+            SettingToggle(title: tr("Show a border around the active window"),
+                          subtitle: tr("Draws a glowing border around the focused window so you can see where you’re typing. The border hides automatically in full screen."),
+                          isOn: $fs.config.borderEnabled)
                 .disabled(!trust.isTrusted && !c.borderEnabled)
-            } footer: {
-                if !trust.isTrusted { Text("ต้องอนุญาตการเข้าถึงก่อนจึงจะติดตามหน้าต่างของแอปอื่นได้") }
-            }
-
-            AXPermissionSection()
-
-            Section("ตัวอย่าง") {
-                BorderPreview(cfg: c)
-                    .frame(height: 150)
-                    .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
-                    .opacity(c.borderEnabled ? 1 : 0.45)
-            }
-
-            Section("รูปแบบ") {
-                ColorPicker(selection: fs.color(\.borderColor), supportsOpacity: true) {
-                    Text("สีขอบ")
-                    Text("สีหลักของเส้นขอบและแสงเรือง")
-                }
-                Toggle(isOn: $fs.config.borderUseGradient) {
-                    Text("ไล่สี")
-                    Text("ไล่จากสีขอบไปยังสีที่สองตามแนวทแยง")
-                }
-                if c.borderUseGradient {
-                    ColorPicker(selection: fs.color(\.borderColor2), supportsOpacity: true) {
-                        Text("สีที่สอง")
-                        Text("สีปลายทางของการไล่สี")
-                    }
-                }
-                FeatureSlider(title: "ความหนา", subtitle: "ความกว้างของเส้นขอบ", value: $fs.config.borderWidth, range: 1...12)
-                FeatureSlider(title: "ความโค้งของมุม", subtitle: "ตั้งให้ใกล้กับมุมหน้าต่างของ macOS (ประมาณ 10–16)", value: $fs.config.borderRadius, range: 0...28)
-                FeatureSlider(title: "แสงเรือง", subtitle: "ตั้งเป็น 0 เพื่อให้เป็นเส้นเรียบ ๆ", value: $fs.config.borderGlow, range: 0...30)
-            }
-            .disabled(!c.borderEnabled)
-
-            Section {
-                Toggle(isOn: $fs.config.borderShowInactive) {
-                    Text("แสดงขอบบนหน้าต่างอื่นด้วย")
-                    Text("วาดเส้นบาง ๆ ไม่เรืองแสงรอบหน้าต่างที่ไม่ได้ใช้งาน")
-                }
-                if c.borderShowInactive {
-                    ColorPicker(selection: fs.color(\.borderInactiveColor), supportsOpacity: true) {
-                        Text("สีขอบหน้าต่างอื่น")
-                        Text("แนะนำสีอ่อนและโปร่งแสง จะได้ไม่แย่งความสนใจ")
-                    }
-                }
-            } header: {
-                Text("หน้าต่างอื่น")
-            } footer: {
-                Text("ต้องอ่านรายการหน้าต่างทุกวินาที จึงใช้พลังงานมากขึ้นเล็กน้อย")
-            }
-            .disabled(!c.borderEnabled)
         }
+
+        AXPermissionSection()
+
+        SettingsGroup(title: tr("Preview")) {
+            PreviewCard(dimmed: !c.borderEnabled) { BorderPreview(cfg: c) }
+        }
+
+        SettingsGroup(title: tr("Appearance")) {
+            ColorRow(title: tr("Border color"), subtitle: tr("The main color of the border and glow"), selection: fs.color(\.borderColor))
+            SettingToggle(title: tr("Gradient"), subtitle: tr("Blends diagonally from the border color to a second color"),
+                          isOn: $fs.config.borderUseGradient)
+            if c.borderUseGradient {
+                ColorRow(title: tr("Second color"), subtitle: tr("The end color of the gradient"), selection: fs.color(\.borderColor2))
+            }
+            FeatureSlider(title: tr("Width"), subtitle: tr("How thick the border is"), value: $fs.config.borderWidth, range: 1...12)
+            FeatureSlider(title: tr("Corner radius"), subtitle: tr("Match macOS window corners (about 10–16)"), value: $fs.config.borderRadius, range: 0...28)
+            FeatureSlider(title: tr("Glow"), subtitle: tr("Set to 0 for a plain line"), value: $fs.config.borderGlow, range: 0...30)
+        }
+        .disabled(!c.borderEnabled)
+
+        SettingsGroup(title: tr("Other windows"), footer: tr("Reads the window list every second, so it uses slightly more energy.")) {
+            SettingToggle(title: tr("Show borders on other windows"), subtitle: tr("Draws a thin border without glow around inactive windows"),
+                          isOn: $fs.config.borderShowInactive)
+            if c.borderShowInactive {
+                ColorRow(title: tr("Inactive border color"), subtitle: tr("A light, translucent color works best so it doesn’t distract"),
+                         selection: fs.color(\.borderInactiveColor))
+            }
+        }
+        .disabled(!c.borderEnabled)
     }
 }
 
@@ -139,14 +111,14 @@ private struct BorderPreview: View {
                                            startPoint: .topLeading, endPoint: .bottomTrailing))
             : AnyShapeStyle(cfg.borderColor.color)
         ZStack {
-            LinearGradient(colors: [Color(white: 0.22), Color(white: 0.1)], startPoint: .top, endPoint: .bottom)
+            DesktopBackdrop()
             RoundedRectangle(cornerRadius: cfg.borderRadius, style: .continuous)
-                .fill(.background)
+                .fill(Theme.surfaceRaised)
                 .overlay(alignment: .topLeading) {
                     HStack(spacing: 6) {
-                        Circle().fill(.red).frame(width: 10)
-                        Circle().fill(.yellow).frame(width: 10)
-                        Circle().fill(.green).frame(width: 10)
+                        Circle().fill(Color(hex: 0xFF5F57)).frame(width: 10)
+                        Circle().fill(Color(hex: 0xFEBC2E)).frame(width: 10)
+                        Circle().fill(Color(hex: 0x28C840)).frame(width: 10)
                     }
                     .padding(10)
                 }
@@ -157,8 +129,7 @@ private struct BorderPreview: View {
                 }
                 .frame(width: 240, height: 110)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .accessibilityHidden(true)
+        .environment(\.layoutDirection, .leftToRight)
     }
 }
 
@@ -171,51 +142,41 @@ struct SnappingPage: View {
 
     var body: some View {
         let c = fs.config
-        Form {
-            Section {
-                Toggle(isOn: $fs.config.snapEnabled) {
-                    Text("จัดหน้าต่างด้วยคีย์ลัด")
-                    Text("ย้ายและปรับขนาดหน้าต่างที่ใช้งานอยู่ให้เต็มครึ่งจอ มุมจอ หรือเต็มพื้นที่ โดยไม่ทับแถบเมนูและ Dock")
-                }
-            } footer: {
-                if !trust.isTrusted { Text("คีย์ลัดทำงานได้เลย แต่ต้องอนุญาตการเข้าถึงก่อนจึงจะย้ายหน้าต่างของแอปอื่นได้") }
-            }
+        SettingsGroup(footer: trust.isTrusted ? nil : tr("Shortcuts work right away, but moving other apps’ windows requires accessibility access.")) {
+            SettingToggle(title: tr("Snap windows with shortcuts"),
+                          subtitle: tr("Move and resize the active window to half the screen, a corner, or the full screen without covering the menu bar or Dock."),
+                          isOn: $fs.config.snapEnabled)
+        }
 
-            AXPermissionSection()
+        AXPermissionSection()
 
-            Section {
-                FeatureSlider(title: "ระยะห่าง", subtitle: "ช่องว่างรอบหน้าต่างและระหว่างหน้าต่างที่วางชิดกัน",
-                              value: $fs.config.snapGap, range: 0...32)
-            }
-            .disabled(!c.snapEnabled)
+        SettingsGroup {
+            FeatureSlider(title: tr("Gap"), subtitle: tr("Space around windows and between adjacent windows"),
+                          value: $fs.config.snapGap, range: 0...32)
+        }
+        .disabled(!c.snapEnabled)
 
-            Section {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            SettingsGroup(title: tr("Shortcuts"),
+                          footer: tr("Click a shortcut, then press a new key with ⌃, ⌥, or ⌘. Press esc to cancel or ⌫ to turn the shortcut off.")) {
                 ForEach(SnapAction.allCases) { a in
-                    LabeledContent {
-                        HStack(spacing: 8) {
+                    SettingRow(title: a.label, icon: a.symbol) {
+                        HStack(spacing: Space.xs) {
                             if snapper.failed.contains(a) {
                                 Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.orange)
-                                    .help("คีย์ลัดนี้ถูกแอปอื่นใช้อยู่ ลองเปลี่ยนเป็นคีย์อื่น")
+                                    .foregroundStyle(Theme.warning)
+                                    .help(tr("Another app is using this shortcut. Try a different one."))
+                                    .accessibilityLabel(tr("Another app is using this shortcut. Try a different one."))
                             }
                             ShortcutRecorder(action: a)
                         }
-                    } label: {
-                        Label(a.label, systemImage: a.symbol)
                     }
                 }
-            } header: {
-                Text("คีย์ลัด")
-            } footer: {
-                HStack(alignment: .top) {
-                    Text("คลิกที่คีย์ลัดแล้วกดคีย์ใหม่พร้อม ⌃ ⌥ หรือ ⌘ · กด esc เพื่อยกเลิก · กด ⌫ เพื่อปิดคีย์ลัดนั้น")
-                    Spacer()
-                    Button("คืนค่าเริ่มต้น") { fs.config.snapShortcuts = SnapAction.defaultShortcuts }
-                        .controlSize(.small)
-                }
             }
-            .disabled(!c.snapEnabled)
+            Button(tr("Restore defaults")) { fs.config.snapShortcuts = SnapAction.defaultShortcuts }
+                .buttonStyle(SecondaryButtonStyle())
         }
+        .disabled(!c.snapEnabled)
         .onDisappear { ShortcutRecording.shared.stop() }
     }
 }
@@ -275,15 +236,21 @@ private struct ShortcutRecorder: View {
         Button {
             recording ? rec.stop() : rec.start(action)
         } label: {
-            Text(recording ? "กดคีย์ลัด…" : combo?.display ?? "ไม่มี")
-                .font(.system(.body, design: .rounded).weight(.medium))
+            Text(recording ? tr("Press shortcut…") : combo?.display ?? tr("None"))
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(recording ? Color.accentColor : combo == nil ? .secondary : .primary)
+                .foregroundStyle(recording ? Theme.accentEnd : combo == nil ? Theme.textSecondary : Theme.textPrimary)
                 .frame(minWidth: 84)
         }
-        .buttonStyle(.bordered)
-        .accessibilityLabel("คีย์ลัดสำหรับ\(action.label)")
-        .accessibilityValue(recording ? "กำลังรอคีย์ใหม่" : combo?.display ?? "ไม่มี")
+        .buttonStyle(SecondaryButtonStyle())
+        .overlay {
+            if recording {
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                    .strokeBorder(Theme.accentGradientDiagonal, lineWidth: 1.5)
+            }
+        }
+        .accessibilityLabel(tr("Shortcut for %@", action.label))
+        .accessibilityValue(recording ? tr("Waiting for new shortcut") : combo?.display ?? tr("None"))
     }
 }
 
@@ -295,59 +262,50 @@ struct MenuBarPage: View {
 
     var body: some View {
         let c = fs.config
-        Form {
-            Section {
-                Toggle(isOn: $fs.config.hiderEnabled) {
-                    Text("ซ่อนไอคอนบนแถบเมนู")
-                    Text("เพิ่มปุ่มลูกศรบนแถบเมนู คลิกเพื่อซ่อนหรือแสดงไอคอนที่ไม่ได้ใช้บ่อย แถบเมนูจะดูโล่งขึ้น")
-                }
-            }
+        SettingsGroup {
+            SettingToggle(title: tr("Hide menu bar icons"),
+                          subtitle: tr("Adds an arrow button to the menu bar. Click it to hide or show icons you rarely use for a cleaner menu bar."),
+                          isOn: $fs.config.hiderEnabled)
+        }
 
-            Section {
-                Toggle(isOn: $fs.config.hiderAutoRehide) {
-                    Text("ซ่อนกลับอัตโนมัติ")
-                    Text("หลังคลิกแสดงไอคอน จะซ่อนกลับเองเมื่อครบเวลาที่ตั้งไว้")
-                }
-                FeatureSlider(title: "ซ่อนกลับหลังจาก", subtitle: "นับจากตอนที่คลิกแสดงไอคอน",
-                              value: $fs.config.hiderDelay, range: 3...60, unit: "วินาที")
-                    .disabled(!c.hiderAutoRehide)
-                LabeledContent {
-                    Button(hider.isHidden ? "แสดงไอคอน" : "ซ่อนไอคอน") { hider.setHidden(!hider.isHidden) }
-                } label: {
-                    Text("สถานะตอนนี้")
-                    Text(hider.isHidden ? "ไอคอนทางซ้ายของเส้นคั่นซ่อนอยู่" : "แสดงไอคอนทั้งหมด")
-                }
-                if hider.misordered {
-                    Label("เส้นคั่นอยู่ทางขวาของปุ่มลูกศร จึงซ่อนไม่ได้ กด ⌘ ค้างแล้วลากเส้นคั่นไปไว้ทางซ้ายของปุ่มลูกศร",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                }
-            } header: {
-                Text("การทำงาน")
+        SettingsGroup(title: tr("Behavior")) {
+            SettingToggle(title: tr("Hide again automatically"), subtitle: tr("After you show the icons, they hide again when the time is up"),
+                          isOn: $fs.config.hiderAutoRehide)
+            FeatureSlider(title: tr("Hide again after"), subtitle: tr("Counted from when you show the icons"),
+                          value: $fs.config.hiderDelay, range: 3...60, unit: tr("sec"))
+                .disabled(!c.hiderAutoRehide)
+            SettingRow(title: tr("Current status"),
+                       subtitle: hider.isHidden ? tr("Icons left of the divider are hidden") : tr("All icons are visible")) {
+                Button(hider.isHidden ? tr("Show icons") : tr("Hide icons")) { hider.setHidden(!hider.isHidden) }
+                    .buttonStyle(SecondaryButtonStyle())
             }
-            .disabled(!c.hiderEnabled)
+            if hider.misordered {
+                StatusRow(kind: .warning,
+                          title: tr("The divider is to the right of the arrow button, so icons can’t be hidden. Hold ⌘ and drag the divider to the left of the arrow button."))
+            }
+        }
+        .disabled(!c.hiderEnabled)
 
-            Section {
-                step(1, "คลิกปุ่มลูกศรบนแถบเมนูเพื่อแสดงเส้นคั่น")
-                step(2, "กด ⌘ ค้างไว้ แล้วลากไอคอนที่อยากซ่อนไปไว้ทางซ้ายของเส้นคั่น")
-                step(3, "คลิกปุ่มลูกศรอีกครั้ง ไอคอนทางซ้ายของเส้นคั่นจะหายไป ส่วนทางขวายังแสดงตามปกติ")
-                step(4, "คลิกขวาที่ปุ่มลูกศรเพื่อเปิดเมนูของฟีเจอร์นี้")
-            } header: {
-                Text("วิธีเลือกไอคอนที่จะซ่อน")
-            } footer: {
-                Text("macOS ไม่เปิดให้แอปจัดเรียงไอคอนของแอปอื่น จึงต้องลากเอง ไอคอนบางตัวของระบบ เช่น ศูนย์ควบคุม และนาฬิกา ย้ายไม่ได้ บน Mac ที่มีรอยบากของจอ ไอคอนที่ล้นอาจถูกรอยบากบังอยู่แล้ว")
-            }
+        SettingsGroup(title: tr("How to choose icons to hide"),
+                      footer: tr("macOS doesn’t let apps rearrange other apps’ icons, so you drag them yourself. Some system icons, like Control Center and the clock, can’t be moved. On Macs with a notch, overflowing icons may already be hidden behind it.")) {
+            step(1, tr("Click the arrow button in the menu bar to show the divider."))
+            step(2, tr("Hold ⌘ and drag the icons you want to hide to the left of the divider."))
+            step(3, tr("Click the arrow button again. Icons left of the divider disappear; icons to the right stay visible."))
+            step(4, tr("Right-click the arrow button to open this feature’s menu."))
         }
     }
 
     private func step(_ n: Int, _ text: String) -> some View {
-        Label {
-            Text(text)
-        } icon: {
-            Text("\(n)").font(.caption.bold()).foregroundStyle(.white)
-                .frame(width: 20, height: 20)
-                .background(Color.accentColor, in: Circle())
+        HStack(alignment: .top, spacing: Space.sm) {
+            Text("\(n)").font(TypeScale.badge).foregroundStyle(.white)
+                .frame(width: 22, height: 22)
+                .background(Theme.accentGradientTextSafeDiagonal, in: Circle())
+                .accessibilityHidden(true)
+            Text(text).font(TypeScale.body).foregroundStyle(Theme.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -361,118 +319,88 @@ struct CustomBarPage: View {
 
     var body: some View {
         let c = fs.config
-        Form {
-            Section {
-                Toggle(isOn: $fs.config.barEnabled) {
-                    Text("แสดงแถบเมนูแบบกำหนดเอง")
-                    Text("แถบด้านบนจอที่แสดงชื่อแอป เวลา แบตเตอรี่ CPU หน่วยความจำ และเครือข่าย ปรับสีและรูปทรงได้")
-                }
-            } footer: {
-                Text("เหมาะกับการใช้คู่กับการซ่อนแถบเมนูของ macOS แถบนี้คลิกทะลุได้ จึงไม่บังการคลิกหน้าต่างด้านล่าง")
-            }
+        SettingsGroup(title: tr("Custom menu bar"),
+                      footer: tr("Works best with the macOS menu bar hidden. Clicks pass through the bar, so it never blocks the windows below.")) {
+            SettingToggle(title: tr("Show custom menu bar"),
+                          subtitle: tr("A bar at the top of the screen showing the app name, time, battery, CPU, memory, and network, with adjustable colors and shape."),
+                          isOn: $fs.config.barEnabled)
+        }
 
-            Section {
-                if bar.systemBarVisible {
-                    Label {
-                        Text("แถบเมนูของ macOS ยังแสดงอยู่")
-                        Text("แถบนี้จะวางไว้ใต้แถบเมนูของระบบเพื่อไม่ให้ทับกัน แต่จะกินพื้นที่สองแถว แนะนำให้ซ่อนแถบเมนูของระบบ")
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    }
-                } else {
-                    Label("แถบเมนูของ macOS ซ่อนอยู่ เลื่อนเมาส์ไปขอบบนเพื่อเรียกแถบเมนูของระบบได้ตามปกติ",
-                          systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                }
-                Toggle(isOn: Binding(get: { systemHide }, set: { on in
-                    systemHide = on
-                    CustomMenuBar.setSystemAutoHide(on)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { bar.refreshSystemBarState() }
-                })) {
-                    Text("ซ่อนแถบเมนูของ macOS อัตโนมัติ")
-                    Text("เหมือนตัวเลือก \"ซ่อนและแสดงแถบเมนูโดยอัตโนมัติ: ทุกครั้ง\" ในการตั้งค่าระบบ เปลี่ยนแล้วมีผลทันที")
-                }
-                LabeledContent {
-                    Button("เปิดการตั้งค่าระบบ…") { CustomMenuBar.openSystemMenuBarSettings() }
-                } label: {
-                    Text("ตั้งค่าเองในการตั้งค่าระบบ")
-                    Text("ถ้าสวิตช์ด้านบนไม่มีผล ให้ไปที่ การตั้งค่าระบบ › แถบเมนู แล้วเลือกซ่อนแถบเมนูอัตโนมัติ")
-                }
-            } header: {
-                Text("แถบเมนูของระบบ")
+        SettingsGroup(title: tr("System menu bar")) {
+            if bar.systemBarVisible {
+                StatusRow(kind: .warning, title: tr("The macOS menu bar is still showing"),
+                          subtitle: tr("This bar sits below the system menu bar to avoid overlapping, which takes up two rows. Hiding the system menu bar is recommended."))
+            } else {
+                StatusRow(kind: .ok, title: tr("The macOS menu bar is hidden. Move the pointer to the top edge to reveal it as usual."))
             }
+            SettingToggle(title: tr("Automatically hide the macOS menu bar"),
+                          subtitle: tr("Same as “Automatically hide and show the menu bar: Always” in System Settings. Takes effect immediately."),
+                          isOn: Binding(get: { systemHide }, set: { on in
+                              systemHide = on
+                              CustomMenuBar.setSystemAutoHide(on)
+                              DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { bar.refreshSystemBarState() }
+                          }))
+            SettingRow(title: tr("Set it in System Settings"),
+                       subtitle: tr("If the switch above has no effect, go to System Settings › Menu Bar and choose to hide the menu bar automatically.")) {
+                Button(tr("Open System Settings…")) { CustomMenuBar.openSystemMenuBarSettings() }
+                    .buttonStyle(SecondaryButtonStyle())
+            }
+        }
 
-            Section("ตัวอย่าง") {
+        SettingsGroup(title: tr("Preview")) {
+            PreviewCard(height: 110, dimmed: !c.barEnabled) {
                 ZStack(alignment: .top) {
-                    LinearGradient(colors: [.indigo.opacity(0.8), .purple.opacity(0.5), .black], startPoint: .top, endPoint: .bottom)
+                    DesktopBackdrop()
                     CustomBarView()
                         .frame(height: c.barHeight)
                         .padding(c.barMargin)
                 }
-                .frame(height: 110)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
-                .opacity(c.barEnabled ? 1 : 0.6)
+                .environment(\.layoutDirection, .leftToRight)
             }
+        }
 
-            Section("วิดเจ็ต") {
-                widget(\.barShowApp, "แอปที่ใช้งานอยู่", "ไอคอนและชื่อของแอปที่อยู่หน้าสุด")
-                widget(\.barShowClock, "เวลา", "ชั่วโมงและนาที")
-                widget(\.barShowDate, "วันที่", "วันในสัปดาห์ วันที่ และเดือน")
-                widget(\.barShowBattery, "แบตเตอรี่", "เปอร์เซ็นต์และสถานะการชาร์จ (ไม่แสดงบน Mac ที่ไม่มีแบตเตอรี่)")
-                widget(\.barShowCPU, "CPU", "การใช้งานโปรเซสเซอร์รวมทุกคอร์")
-                widget(\.barShowMemory, "หน่วยความจำ", "คิดแบบเดียวกับ \"หน่วยความจำที่ใช้\" ใน Activity Monitor")
-                widget(\.barShowNetwork, "เครือข่าย", "ประเภทการเชื่อมต่อและความเร็วดาวน์โหลด")
-            }
-            .disabled(!c.barEnabled)
+        SettingsGroup(title: tr("Widgets")) {
+            widget(\.barShowApp, tr("Active app"), tr("Icon and name of the frontmost app"))
+            widget(\.barShowClock, tr("Time"), tr("Hours and minutes"))
+            widget(\.barShowDate, tr("Date"), tr("Weekday, day, and month"))
+            widget(\.barShowBattery, tr("Battery"), tr("Percentage and charging status (hidden on Macs without a battery)"))
+            widget(\.barShowCPU, "CPU", tr("Total processor usage across all cores"))
+            widget(\.barShowMemory, tr("Memory"), tr("Calculated the same way as “Memory Used” in Activity Monitor"))
+            widget(\.barShowNetwork, tr("Network"), tr("Connection type and download speed"))
+        }
+        .disabled(!c.barEnabled)
 
-            Section {
-                ColorPicker(selection: fs.color(\.barColor), supportsOpacity: false) {
-                    Text("สีพื้นหลัง")
-                    Text("สีของตัวแถบ")
-                }
-                FeatureSlider(title: "ความทึบ", subtitle: "ค่าน้อยจะเห็นภาพพื้นหลังทะลุมากขึ้น",
-                              value: $fs.config.barOpacity, range: 0...1, unit: "%")
-                Toggle(isOn: $fs.config.barBlur) {
-                    Text("เบลอด้านหลัง")
-                    Text("ทำให้แถบดูเป็นกระจกฝ้าแบบแถบเมนูของ macOS")
-                }
-                ColorPicker(selection: fs.color(\.barTextColor), supportsOpacity: true) {
-                    Text("สีตัวอักษร")
-                    Text("สีของข้อความและไอคอนในแถบ")
-                }
-                Picker(selection: $fs.config.barFontFamily) {
-                    Text("ค่าเริ่มต้นของระบบ").tag("")
+        SettingsGroup(title: tr("Colors and text")) {
+            ColorRow(title: tr("Background color"), subtitle: tr("The color of the bar itself"), selection: fs.color(\.barColor), supportsOpacity: false)
+            FeatureSlider(title: tr("Opacity"), subtitle: tr("Lower values let more of the wallpaper show through"),
+                          value: $fs.config.barOpacity, range: 0...1, unit: "%")
+            SettingToggle(title: tr("Blur background"), subtitle: tr("Gives the bar a frosted-glass look like the macOS menu bar"),
+                          isOn: $fs.config.barBlur)
+            ColorRow(title: tr("Text color"), subtitle: tr("The color of text and icons in the bar"), selection: fs.color(\.barTextColor))
+            SettingRow(title: tr("Font"), subtitle: tr("Used for all text in the bar")) {
+                MenuPicker(label: tr("Font"), selection: $fs.config.barFontFamily,
+                           current: c.barFontFamily.isEmpty ? tr("System default") : c.barFontFamily) {
+                    Text(tr("System default")).tag("")
                     Divider()
                     ForEach(Self.families, id: \.self) { Text($0).tag($0) }
-                } label: {
-                    Text("แบบอักษร")
-                    Text("ใช้กับข้อความทั้งหมดในแถบ")
                 }
-                FeatureSlider(title: "ขนาดตัวอักษร", value: $fs.config.barFontSize, range: 10...16)
-            } header: {
-                Text("สีและตัวอักษร")
             }
-            .disabled(!c.barEnabled)
-
-            Section {
-                FeatureSlider(title: "ความสูง", subtitle: "แถบเมนูของ macOS สูงประมาณ 24–37 pt",
-                              value: $fs.config.barHeight, range: 22...44)
-                FeatureSlider(title: "ความโค้งของมุม", subtitle: "ตั้งเป็น 0 เพื่อให้เป็นแถบเหลี่ยม",
-                              value: $fs.config.barRadius, range: 0...22)
-                FeatureSlider(title: "ระยะห่างจากขอบจอ", subtitle: "มากกว่า 0 จะเป็นแถบลอย ตั้งเป็น 0 เพื่อให้ชิดขอบจอเต็มความกว้าง",
-                              value: $fs.config.barMargin, range: 0...16)
-                Toggle(isOn: $fs.config.barAllScreens) {
-                    Text("แสดงทุกจอ")
-                    Text("ปิดไว้จะแสดงเฉพาะจอหลัก")
-                }
-            } header: {
-                Text("รูปทรง")
-            } footer: {
-                Text("การจัดหน้าต่างด้วยคีย์ลัดจะเว้นที่ให้แถบนี้อัตโนมัติ แต่หน้าต่างที่ขยายเต็มด้วยวิธีอื่นอาจซ้อนใต้แถบได้ ยังไม่รองรับเพลงที่กำลังเล่น เพราะ macOS ไม่มี API สาธารณะสำหรับข้อมูลนี้")
-            }
-            .disabled(!c.barEnabled)
+            FeatureSlider(title: tr("Font size"), value: $fs.config.barFontSize, range: 10...16)
         }
+        .disabled(!c.barEnabled)
+
+        SettingsGroup(title: tr("Shape"),
+                      footer: tr("Window snapping leaves room for this bar automatically, but windows maximized other ways may sit under it. Now Playing isn’t supported because macOS has no public API for it.")) {
+            FeatureSlider(title: tr("Height"), subtitle: tr("The macOS menu bar is about 24–37 pt tall"),
+                          value: $fs.config.barHeight, range: 22...44)
+            FeatureSlider(title: tr("Corner radius"), subtitle: tr("Set to 0 for square corners"),
+                          value: $fs.config.barRadius, range: 0...22)
+            FeatureSlider(title: tr("Margin"), subtitle: tr("Above 0 the bar floats; set to 0 to span the full width at the screen edge"),
+                          value: $fs.config.barMargin, range: 0...16)
+            SettingToggle(title: tr("Show on all displays"), subtitle: tr("When off, the bar appears only on the main display"),
+                          isOn: $fs.config.barAllScreens)
+        }
+        .disabled(!c.barEnabled)
         .onAppear {
             systemHide = CustomMenuBar.systemAutoHide
             bar.refreshSystemBarState()
@@ -484,9 +412,7 @@ struct CustomBarPage: View {
     }
 
     private func widget(_ kp: WritableKeyPath<FeatureConfig, Bool>, _ title: String, _ subtitle: String) -> some View {
-        Toggle(isOn: Binding(get: { fs.config[keyPath: kp] }, set: { fs.config[keyPath: kp] = $0 })) {
-            Text(title)
-            Text(subtitle)
-        }
+        SettingToggle(title: title, subtitle: subtitle,
+                      isOn: Binding(get: { fs.config[keyPath: kp] }, set: { fs.config[keyPath: kp] = $0 }))
     }
 }

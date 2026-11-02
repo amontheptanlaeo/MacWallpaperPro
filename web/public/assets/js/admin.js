@@ -1,88 +1,80 @@
-import { api, el, formatBytes, formatDate, formatPrice, notice, requireMe } from "./common.js";
+// Moderation queue: live preview (sandboxed), scanner findings, approve / reject with a reason.
+import { api, esc, t, toast } from "./site.js";
 
 const root = document.querySelector("[data-queue]");
-const msg = document.querySelector("[data-msg]");
-const me = await requireMe();
-const SEV = { high: "เสี่ยงสูง", medium: "ควรดู", low: "ข้อมูล" };
 
-if (me.role !== "admin") {
-  root.replaceChildren(notice("error", "หน้านี้สำหรับผู้ดูแลระบบเท่านั้น"));
-} else {
-  load();
+function scanList(scan) {
+  if (!scan.length) return `<p class="muted">${esc(t("admin.scanClean"))}</p>`;
+  return `<h3 class="h4">${esc(t("admin.scanFound"))}</h3><ul class="scan">${scan
+    .map(
+      (f) => `<li class="sev-${esc(f.severity)}"><strong>${esc(t(`scan.${f.id}`))}</strong> (${f.count})${f.samples
+        .map((s) => `<code>${esc(t("admin.line", { n: s.line }))}: ${esc(s.excerpt)}</code>`)
+        .join("")}</li>`,
+    )
+    .join("")}</ul>`;
+}
+
+function render(items) {
+  root.setAttribute("aria-busy", "false");
+  if (!items.length) {
+    root.innerHTML = `<div class="emptybox"><p>${esc(t("admin.empty"))}</p></div>`;
+    return;
+  }
+  root.innerHTML = items
+    .map(
+      (w) => `<article class="qitem" data-id="${esc(w.id)}">
+  <div class="display"><div class="display__screen">
+    <img class="display__poster" src="${esc(w.thumbUrl)}" alt="" width="1600" height="1000">
+    <iframe class="display__frame is-ready" sandbox="allow-scripts" referrerpolicy="no-referrer" loading="lazy" title="${esc(w.title)}" src="${esc(w.previewUrl)}"></iframe>
+  </div></div>
+  <div class="qitem__meta">
+    <h2>${esc(w.title)}</h2>
+    <p class="muted">${esc(t("card.by", { name: w.author.name }))} (${esc(w.authorEmail)}), ${esc(t(`cat.${w.category}`))}, ${(w.sizeBytes / 1024).toFixed(0)} KB</p>
+    ${w.description ? `<p dir="auto">${esc(w.description)}</p>` : ""}
+    ${scanList(w.scan)}
+    <div class="qitem__actions">
+      <button type="button" class="btn btn--light" data-approve>${esc(t("admin.approve"))}</button>
+      <label class="field"><span class="sr">${esc(t("admin.reason"))}</span><input data-reason maxlength="500" placeholder="${esc(t("admin.reason"))}"></label>
+      <button type="button" class="btn btn--ghost" data-reject>${esc(t("admin.reject"))}</button>
+    </div>
+  </div>
+</article>`,
+    )
+    .join("");
 }
 
 async function load() {
   try {
-    const { items } = await api("/api/admin/queue");
-    if (!items.length) {
-      root.replaceChildren(el("div", { class: "empty" }, el("p", {}, "ไม่มีงานรอตรวจ")));
-      return;
-    }
-    root.replaceChildren(...items.map(item));
+    render((await api("/api/admin/queue")).items);
   } catch (e) {
-    root.replaceChildren(notice("error", e.message));
+    root.innerHTML = `<p class="error" role="alert">${esc(e.message)}</p>`;
   }
 }
 
-function item(w) {
-  const frameBox = el("div", { class: "stage" }, el("img", { src: w.thumbUrl, alt: `ภาพปกของ ${w.title}` }));
-  const play = el("button", { class: "btn small", type: "button" }, "รันตัวอย่างในแซนด์บ็อกซ์");
-  play.addEventListener("click", () => {
-    frameBox.replaceChildren(el("iframe", { src: w.previewUrl, sandbox: "allow-scripts", title: `ตัวอย่าง ${w.title}`, referrerpolicy: "no-referrer" }));
-    play.remove();
-  });
-
-  const flags = w.scan.length
-    ? el(
-        "ul",
-        { class: "flags" },
-        w.scan.map((f) =>
-          el("li", { class: `flag ${f.severity}` }, el("strong", {}, `${SEV[f.severity] || f.severity}: ${f.label}`), ` (${f.count} จุด)`, ...f.samples.map((s) => el("code", {}, `บรรทัด ${s.line}: ${s.excerpt}`))),
-        ),
-      )
-    : el("p", { class: "small", role: "note" }, el("span", { class: "badge approved" }, "สแกนไม่พบรูปแบบที่น่าสงสัย"));
-
-  const reason = el("input", { type: "text", name: "reason", maxlength: "500", placeholder: "เหตุผลที่ไม่อนุมัติ (ผู้สร้างจะเห็นข้อความนี้)", "aria-label": `เหตุผลที่ไม่อนุมัติ ${w.title}` });
-  const approve = el("button", { class: "btn primary small", type: "button" }, "อนุมัติขึ้นร้าน");
-  const reject = el("button", { class: "btn danger small", type: "submit" }, "ไม่อนุมัติ");
-  const card = el(
-    "article",
-    { class: "qitem", "aria-label": w.title },
-    el("div", {}, frameBox, el("div", { class: "stage-tools" }, el("span", {}, "iframe sandbox ไม่มี allow-same-origin"), play)),
-    el(
-      "div",
-      {},
-      el("h2", {}, w.title),
-      el("p", { class: "muted small" }, `${w.author.name} (${w.authorEmail})  ${formatPrice(w.priceCents)}  ${formatBytes(w.sizeBytes)}  ส่งเมื่อ ${formatDate(w.createdAt)}`),
-      w.description ? el("p", { class: "small desc" }, w.description) : null,
-      el("h3", {}, "ผลสแกน"),
-      flags,
-      el("div", { class: "actions" }, approve),
-      el("form", { class: "reject-form" }, reason, reject),
-    ),
-  );
-  approve.addEventListener("click", () => act(card, w, "approve"));
-  card.querySelector("form").addEventListener("submit", (e) => {
-    e.preventDefault();
-    if (!reason.value.trim()) {
-      reason.setAttribute("aria-invalid", "true");
-      reason.focus();
-      return;
-    }
-    act(card, w, "reject", reason.value.trim());
-  });
-  return card;
-}
-
-async function act(card, w, action, reason) {
-  card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+root?.addEventListener("click", async (e) => {
+  const item = e.target.closest(".qitem");
+  if (!item) return;
+  const id = item.dataset.id;
   try {
-    await api(`/api/admin/wallpapers/${encodeURIComponent(w.id)}/${action}`, { method: "POST", body: action === "reject" ? { reason } : {} });
-    msg.replaceChildren(notice("ok", action === "approve" ? `อนุมัติ "${w.title}" แล้ว ขึ้นร้านเรียบร้อย` : `ไม่อนุมัติ "${w.title}" แล้ว`));
-    card.remove();
-    if (!root.children.length) load();
-  } catch (e) {
-    msg.replaceChildren(notice("error", e.message));
-    card.querySelectorAll("button").forEach((b) => (b.disabled = false));
+    if (e.target.closest("[data-approve]")) {
+      await api(`/api/admin/wallpapers/${id}/approve`, { method: "POST" });
+      toast(t("admin.approved"));
+    } else if (e.target.closest("[data-reject]")) {
+      const input = item.querySelector("[data-reason]");
+      const reason = input.value.trim();
+      if (!reason) {
+        input.focus();
+        input.setAttribute("aria-invalid", "true");
+        return;
+      }
+      await api(`/api/admin/wallpapers/${id}/reject`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) });
+      toast(t("admin.rejected"));
+    } else return;
+    item.remove();
+    if (!root.querySelector(".qitem")) render([]);
+  } catch (err) {
+    toast(err.message);
   }
-}
+});
+
+if (root) load();

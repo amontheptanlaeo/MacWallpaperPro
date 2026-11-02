@@ -6,12 +6,9 @@ export interface Limit {
 }
 
 export const LIMITS = {
-  login: { limit: 10, windowSec: 15 * 60 },
-  loginEmail: { limit: 5, windowSec: 15 * 60 },
-  register: { limit: 5, windowSec: 60 * 60 },
+  oauth: { limit: 30, windowSec: 15 * 60 },
+  devLogin: { limit: 30, windowSec: 15 * 60 },
   upload: { limit: 10, windowSec: 60 * 60 },
-  checkout: { limit: 20, windowSec: 60 * 60 },
-  connect: { limit: 10, windowSec: 60 * 60 },
 } satisfies Record<string, Limit>;
 
 /**
@@ -32,7 +29,7 @@ export async function rateLimit(env: Env, key: string, { limit, windowSec }: Lim
     .first<{ count: number }>();
   if (row && row.count > limit) {
     const retry = windowStart + windowSec - now;
-    throw new HttpError(429, "rate_limited", `ทำรายการถี่เกินไป ลองใหม่ในอีก ${Math.ceil(retry / 60)} นาที`, {
+    throw new HttpError(429, "rate_limited", `Too many requests. Try again in ${Math.ceil(retry / 60)} min.`, {
       "Retry-After": String(retry),
     });
   }

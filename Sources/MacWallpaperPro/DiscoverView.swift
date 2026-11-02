@@ -1,71 +1,136 @@
 import AppKit
 import SwiftUI
 
+enum CommunityCategory: String, CaseIterable, Identifiable {
+    case all, nature, cartoon, cute, scifi, space, abstract
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: tr("All")
+        case .nature: tr("Nature")
+        case .cartoon: tr("Cartoon & Anime")
+        case .cute: tr("Cute & Pastel")
+        case .scifi: tr("Sci-fi")
+        case .space: tr("Space & Stars")
+        case .abstract: tr("Abstract")
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .all: "square.grid.2x2"
+        case .nature: "leaf.fill"
+        case .cartoon: "paintpalette.fill"
+        case .cute: "heart.fill"
+        case .scifi: "bolt.fill"
+        case .space: "moon.stars.fill"
+        case .abstract: "scribble.variable"
+        }
+    }
+
+    var query: String? { self == .all ? nil : rawValue }
+}
+
 struct DiscoverView: View {
     @EnvironmentObject var store: Store
     @ObservedObject private var community = Community.shared
     @State private var selection: String?
+    @State private var showDetails = false
     @State private var search = ""
     @State private var sort = "new"
-    @State private var showInspector = true
-    @State private var editingServer = false
+    @State private var category: CommunityCategory = .all
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var selected: WallpaperSummary? {
-        community.items.first { $0.id == selection } ?? community.items.first
-    }
+    private var selected: WallpaperSummary? { community.items.first { $0.id == selection } }
 
     var body: some View {
-        ScrollView {
-            content.padding(20)
-        }
-        .searchable(text: $search, placement: .toolbar, prompt: "ค้นหาใน Community")
-        .onSubmit(of: .search) { reload() }
-        .onChange(of: search) { if search.isEmpty { reload() } }
-        .onChange(of: sort) { reload() }
-        .toolbar { toolbar }
-        .inspector(isPresented: $showInspector) {
-            Group {
-                if let item = selected { DiscoverInspector(item: item) } else { Color.clear }
+        HStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Space.lg) {
+                    PageHeader(title: "Discover") { headerControls }
+                    categoryChips
+                    NowPlayingStrip {
+                        Navigator.shared.showActiveDetails = true
+                        withMotion { Navigator.shared.page = .library }
+                    }
+                    content
+                }
+                .padding(.horizontal, Space.page).padding(.bottom, Space.page).padding(.top, Space.xxs)
             }
-            .inspectorColumnWidth(min: 300, ideal: 340, max: 440)
+            .frame(maxWidth: .infinity)
+            if showDetails, let item = selected {
+                DetailColumn(title: item.title, close: { withMotion(Motion.panel) { showDetails = false } }) {
+                    DiscoverDetails(item: item)
+                }
+                .transition(.detailColumn(reduceMotion: reduceMotion))
+            }
         }
         .overlay(alignment: .bottom) { toast }
-        .task { await community.load(query: search, sort: sort); await community.refreshMe() }
-        .sheet(isPresented: $editingServer) { ServerSheet() }
+        .onChange(of: sort) { reload() }
+        .onChange(of: category) { reload() }
+        .task { await community.load(query: search, sort: sort, category: category.query) }
+    }
+
+    @ViewBuilder
+    private var headerControls: some View {
+        SearchField(prompt: tr("Search Community"), text: $search, onSubmit: reload).frame(width: 220)
+        SegmentedControl(label: tr("Sort by"), selection: $sort, options: [("new", tr("Newest")), ("popular", tr("Popular"))])
+            .fixedSize()
+        Button { reload() } label: { Image(systemName: "arrow.clockwise") }
+            .buttonStyle(IconButtonStyle())
+            .help(tr("Refresh"))
+            .accessibilityLabel(tr("Refresh"))
+        Menu {
+            Button(tr("Submit your wallpaper…")) { NSWorkspace.shared.open(community.baseURL.appendingPathComponent("community/upload")) }
+            Button(tr("Open Community on the web")) { NSWorkspace.shared.open(community.baseURL.appendingPathComponent("community")) }
+        } label: {
+            Image(systemName: "globe")
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(IconButtonStyle())
+        .fixedSize()
+        .help(tr("Community"))
+        .accessibilityLabel(tr("Community"))
+    }
+
+    private var categoryChips: some View {
+        FlowLayout() {
+            ForEach(CommunityCategory.allCases) { c in
+                Button { withMotion(Motion.quick) { category = c } } label: {
+                    Label(c.title, systemImage: c.symbol)
+                }
+                .buttonStyle(ChipButtonStyle(selected: category == c))
+                .accessibilityAddTraits(category == c ? .isSelected : [])
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(tr("Category"))
     }
 
     @ViewBuilder
     private var content: some View {
         if community.loading && community.items.isEmpty {
-            LazyVGrid(columns: galleryColumns, spacing: 16) {
-                ForEach(0..<8, id: \.self) { _ in
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(.quaternary)
-                        .aspectRatio(16 / 10, contentMode: .fit)
-                }
+            LazyVGrid(columns: Metrics.gridColumns, spacing: Space.lg) {
+                ForEach(0..<8, id: \.self) { _ in SkeletonTile() }
             }
-            .redacted(reason: .placeholder)
         } else if let err = community.loadError {
-            ContentUnavailableView {
-                Label("เชื่อมต่อ Community ไม่ได้", systemImage: "wifi.exclamationmark")
-            } description: {
-                Text(err)
-            } actions: {
-                Button("ลองอีกครั้ง") { reload() }.buttonStyle(.borderedProminent)
-                Button("ตั้งค่าเซิร์ฟเวอร์…") { editingServer = true }
+            StateCard(symbol: "wifi.exclamationmark", title: tr("Can’t connect to Community"), message: err) {
+                Button { reload() } label: { Label(tr("Try again"), systemImage: "arrow.clockwise") }
+                    .buttonStyle(PrimaryButtonStyle())
             }
-            .frame(maxWidth: .infinity, minHeight: 360)
         } else if community.items.isEmpty {
-            ContentUnavailableView(search.isEmpty ? "ยังไม่มี wallpaper" : "ไม่พบ “\(search)”",
-                                   systemImage: "magnifyingglass",
-                                   description: Text(search.isEmpty ? "เป็นคนแรกที่ส่งผลงานขึ้น Community" : "ลองค้นหาด้วยคำอื่น"))
-                .frame(maxWidth: .infinity, minHeight: 360)
+            StateCard(symbol: "magnifyingglass",
+                      title: search.isEmpty ? tr("No wallpapers yet") : tr("No results for “%@”", search),
+                      message: search.isEmpty ? tr("Be the first to share your work on Community.") : tr("Try a different search."))
         } else {
-            LazyVGrid(columns: galleryColumns, spacing: 16) {
+            LazyVGrid(columns: Metrics.gridColumns, spacing: Space.lg) {
                 ForEach(community.items) { item in
-                    GalleryTile(title: item.title, subtitle: "โดย \(item.author.name)",
-                                selected: selected?.id == item.id,
-                                active: activeID == item.id) {
+                    WallpaperTile(title: item.title, subtitle: tr("By %@", item.author.name),
+                                  selected: showDetails && selection == item.id,
+                                  active: activeID == item.id,
+                                  action: { withMotion(Motion.panel) { selection = item.id; showDetails = true } }) {
                         AsyncImage(url: community.thumbURL(item)) { phase in
                             if case .success(let img) = phase {
                                 img.resizable().aspectRatio(contentMode: .fill)
@@ -73,14 +138,10 @@ struct DiscoverView: View {
                                 PlaceholderThumb(symbol: "photo")
                             }
                         }
-                    } badge: {
-                        if community.isInstalled(item.id) {
-                            PriceBadge(text: "อยู่ในคลัง")
-                        } else {
-                            PriceBadge(text: item.priceLabel)
-                        }
+                    } accessory: {
+                        GetButton(item: item)
                     }
-                    .onTapGesture { selection = item.id }
+                    .accessibilityAction(named: Text(tr("Get"))) { Task { await community.install(id: item.id) } }
                 }
             }
         }
@@ -93,157 +154,131 @@ struct DiscoverView: View {
     @ViewBuilder
     private var toast: some View {
         if let n = community.notice {
-            Label(n.text, systemImage: n.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .foregroundStyle(n.isError ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
-                .padding(.horizontal, 16).padding(.vertical, 10)
-                .background(.regularMaterial, in: Capsule())
-                .shadow(radius: 10, y: 4)
-                .padding(.bottom, 20)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+            ToastView(text: n.text, isError: n.isError)
+                .padding(.bottom, Space.lg)
+                .padding(.horizontal, Space.lg)
+                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                 .task(id: n.text) {
-                    try? await Task.sleep(for: .seconds(n.isError ? 6 : 4))
-                    withAnimation { community.notice = nil }
+                    try? await Task.sleep(for: .seconds(n.isError ? 5 : 4))
+                    withMotion { community.notice = nil }
                 }
-                .onTapGesture { withAnimation { community.notice = nil } }
+                .onTapGesture { withMotion { community.notice = nil } }
         }
     }
 
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .principal) {
-            Picker("เรียงตาม", selection: $sort) {
-                Text("ใหม่ล่าสุด").tag("new")
-                Text("ยอดนิยม").tag("popular")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-        }
-        ToolbarItemGroup(placement: .primaryAction) {
-            Button { reload() } label: { Label("รีเฟรช", systemImage: "arrow.clockwise") }
-            Menu {
-                if community.isConnected {
-                    Text(community.me.map { "\($0.displayName) · \($0.email)" } ?? "เชื่อมบัญชีแล้ว")
-                    Button("ยกเลิกการเชื่อมบัญชี") { community.disconnect() }
-                } else {
-                    Button("เชื่อมบัญชี…") { community.connect() }
-                }
-                Divider()
-                Button("ส่ง wallpaper ของคุณ…") { NSWorkspace.shared.open(community.baseURL.appendingPathComponent("community/upload")) }
-                Button("เปิด Community บนเว็บ") { NSWorkspace.shared.open(community.baseURL.appendingPathComponent("community")) }
-                Divider()
-                Button("ตั้งค่าเซิร์ฟเวอร์…") { editingServer = true }
-            } label: {
-                Label("บัญชี", systemImage: community.isConnected ? "person.crop.circle.fill" : "person.crop.circle")
-            }
-            Button { showInspector.toggle() } label: { Label("แผงรายละเอียด", systemImage: "sidebar.right") }
-        }
-    }
-
-    private func reload() { Task { await community.load(query: search, sort: sort) } }
+    private func reload() { Task { await community.load(query: search, sort: sort, category: category.query) } }
 }
 
-struct DiscoverInspector: View {
+/// ปุ่มรับ wallpaper ในคลิกเดียว (แบบ Subscribe ของ Wallpaper Engine) — ติดตั้งแล้วใช้ทันที
+struct GetButton: View {
     let item: WallpaperSummary
     @ObservedObject private var community = Community.shared
 
     var body: some View {
-        Form {
-            Section {
-                AsyncImage(url: community.thumbURL(item)) { phase in
-                    if case .success(let img) = phase { img.resizable().aspectRatio(contentMode: .fill) }
-                    else { PlaceholderThumb(symbol: "photo") }
+        Group {
+            if community.installing.contains(item.id) {
+                ProgressView().controlSize(.small).tint(.white)
+                    .frame(width: 28, height: 28)
+                    .background(.black.opacity(0.7), in: Capsule())
+                    .accessibilityLabel(tr("Installing and verifying…"))
+            } else if community.isInstalled(item.id) {
+                Label(tr("In library"), systemImage: "checkmark")
+                    .font(TypeScale.badge)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, Space.sm).frame(minHeight: 28)
+                    .background(.black.opacity(0.7), in: Capsule())
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.12)))
+            } else {
+                Button {
+                    Task { await community.install(id: item.id) }
+                } label: {
+                    Label(tr("Get"), systemImage: "arrow.down")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, Space.sm).frame(minHeight: 28)
+                        .background(Theme.accentGradient, in: Capsule())
+                        .shadow(color: .black.opacity(0.35), radius: 6, y: 2)
+                        .contentShape(Capsule())
                 }
-                .aspectRatio(16 / 10, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .listRowInsets(EdgeInsets(top: 10, leading: 10, bottom: 4, trailing: 10))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.title).font(.title3.weight(.semibold))
-                    Text("โดย \(item.author.name)").foregroundStyle(.secondary)
-                }
-                primaryAction
-            } footer: {
-                if !item.isFree && !community.isInstalled(item.id) {
-                    Text("ซื้อบนเว็บแล้วกด “ติดตั้ง” อีกครั้ง (ต้องเชื่อมบัญชีก่อน)")
-                }
+                .buttonStyle(.plain)
+                .help(tr("Install and set as wallpaper"))
             }
-
-            Section("ข้อมูล") {
-                LabeledContent("ราคา", value: item.priceLabel)
-                LabeledContent("ดาวน์โหลด", value: item.downloads.formatted())
-                if !item.tags.isEmpty {
-                    LabeledContent("แท็ก", value: item.tags.joined(separator: ", "))
-                }
-                Button("ดูหน้าเต็มบนเว็บ") { NSWorkspace.shared.open(community.webPage(for: item.id)) }
-            }
-
-            Section {
-                Label("ทุกไฟล์ผ่านการตรวจจากทีมงาน และแอปตรวจลายเซ็นก่อนติดตั้ง", systemImage: "checkmark.shield.fill")
-                Label("wallpaper จาก Community ต่ออินเทอร์เน็ตไม่ได้", systemImage: "wifi.slash")
-            } header: {
-                Text("ความปลอดภัย")
-            }
-            .foregroundStyle(.secondary)
         }
-        .formStyle(.grouped)
+        .animation(Motion.quick, value: community.installing.contains(item.id))
+    }
+}
+
+struct DiscoverDetails: View {
+    let item: WallpaperSummary
+    @EnvironmentObject var store: Store
+    @ObservedObject private var community = Community.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            // ตัวอย่างสดจากหน้า /preview ของเซิร์ฟเวอร์ (CSP ห้ามต่อเน็ต) — ยังไม่ต้องติดตั้ง
+            WebWallpaper(source: .url(community.baseURL.appendingPathComponent("preview/\(item.id)")),
+                         params: "{}", isDesktop: false, offline: false)
+                .id(item.id)
+                .aspectRatio(16 / 10, contentMode: .fit)
+                .background {
+                    AsyncImage(url: community.thumbURL(item)) { phase in
+                        if case .success(let img) = phase { img.resizable().aspectRatio(contentMode: .fill) }
+                        else { PlaceholderThumb(symbol: "photo") }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(Theme.border))
+                .accessibilityHidden(true)
+            Text(tr("By %@", item.author.name)).font(TypeScale.secondary).foregroundStyle(Theme.textSecondary)
+            primaryAction
+        }
+
+        DetailGroup(title: tr("Info")) {
+            if let c = item.category.flatMap(CommunityCategory.init(rawValue:)) {
+                infoRow(tr("Category"), c.title)
+            }
+            infoRow(tr("Downloads"), item.downloads.formatted())
+            if !item.tags.isEmpty { infoRow(tr("Tags"), item.tags.joined(separator: ", ")) }
+            Button(tr("View on the web")) { NSWorkspace.shared.open(community.webPage(for: item.id)) }
+                .buttonStyle(SecondaryButtonStyle(fullWidth: true))
+        }
+
+        DetailGroup(title: tr("Security")) {
+            StatusRow(kind: .ok, title: tr("Every file is reviewed by our team, and the app verifies its signature before installing."))
+            StatusRow(kind: .info, title: tr("Community wallpapers can’t access the internet."))
+        }
+    }
+
+    private func infoRow(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title).font(TypeScale.secondary).foregroundStyle(Theme.textSecondary)
+            Spacer(minLength: Space.sm)
+            Text(value).font(TypeScale.secondaryMedium).foregroundStyle(Theme.textPrimary)
+                .multilineTextAlignment(.trailing)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
     private var primaryAction: some View {
         if community.installing.contains(item.id) {
-            HStack { ProgressView().controlSize(.small); Text("กำลังติดตั้งและตรวจสอบไฟล์…") }
-                .frame(maxWidth: .infinity)
+            HStack(spacing: Space.xs) {
+                ProgressView().controlSize(.small)
+                Text(tr("Installing and verifying…")).font(TypeScale.secondaryMedium)
+            }
+            .frame(maxWidth: .infinity, minHeight: 32)
         } else if let w = community.installedWallpaper(item.id) {
+            let active = store.config.wallpaperMode == .installed && store.config.installedID == w.id
             Button { community.use(w) } label: {
-                Label("ใช้เป็นภาพพื้นหลัง", systemImage: "photo.badge.checkmark").frame(maxWidth: .infinity)
+                Label(active ? tr("In use") : tr("Set as wallpaper"), systemImage: active ? "checkmark" : "photo.badge.checkmark")
             }
-            .buttonStyle(.borderedProminent).controlSize(.large)
-        } else if item.isFree {
-            Button { Task { await community.install(id: item.id) } } label: {
-                Label("ติดตั้งและใช้", systemImage: "arrow.down.circle.fill").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent).controlSize(.large)
+            .buttonStyle(PrimaryButtonStyle(fullWidth: true))
+            .disabled(active)
         } else {
-            Button { NSWorkspace.shared.open(community.webPage(for: item.id)) } label: {
-                Label("ซื้อ \(item.priceLabel) บนเว็บ", systemImage: "cart.fill").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent).controlSize(.large)
             Button { Task { await community.install(id: item.id) } } label: {
-                Text("ติดตั้ง (ซื้อแล้ว)").frame(maxWidth: .infinity)
+                Label(tr("Install and use"), systemImage: "arrow.down")
             }
-            .controlSize(.large)
+            .buttonStyle(PrimaryButtonStyle(fullWidth: true))
         }
-    }
-}
-
-struct ServerSheet: View {
-    @EnvironmentObject var store: Store
-    @Environment(\.dismiss) private var dismiss
-    @State private var draft = ""
-
-    var body: some View {
-        Form {
-            Section {
-                TextField("ที่อยู่เซิร์ฟเวอร์", text: $draft, prompt: Text("https://macwallpaperpro.com"))
-            } header: {
-                Text("เซิร์ฟเวอร์ Community")
-            } footer: {
-                Text("ใช้สำหรับนักพัฒนา ไฟล์ทุกชิ้นยังต้องมีลายเซ็นจากเซิร์ฟเวอร์ทางการเสมอ")
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: 420)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("ยกเลิก") { dismiss() } }
-            ToolbarItem(placement: .confirmationAction) {
-                Button("บันทึก") {
-                    store.config.communityURL = draft.trimmingCharacters(in: .whitespaces)
-                    dismiss()
-                    Task { await Community.shared.load() }
-                }
-                .disabled(URL(string: draft)?.host == nil)
-            }
-        }
-        .onAppear { draft = store.config.communityURL }
     }
 }

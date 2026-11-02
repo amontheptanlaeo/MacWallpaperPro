@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Event Horizon</title>
+<!--
+  Black Hole — MacWallpaperPro community wallpaper.
+  One full-screen WebGL fragment shader: every pixel traces a photon through a
+  Schwarzschild-like field (a = -1.5 h^2 r / |r|^5, horizon at r = 1), so the
+  accretion disk's far side is lensed over and under the shadow and the
+  starfield warps into an Einstein ring. Keplerian swirl uses a two-phase flow
+  map so the texture never winds up. Doppler beaming brightens the approaching side.
+  Interaction: cursor tilts the camera (inclination / yaw); click sends a bright
+  pulse rippling out through the disk.
+-->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #020108; }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(() => {
+'use strict';
+const cv = document.getElementById('c');
+const gl = cv.getContext('webgl', { antialias: false, alpha: false, depth: false, stencil: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
+const RM = matchMedia('(prefers-reduced-motion: reduce)');
+const P = { speed: 1 };
+window.setP = o => { if (o && typeof o.speed === 'number' && isFinite(o.speed)) P.speed = Math.max(0, Math.min(4, o.speed)); };
+if (!gl) { document.body.style.background = 'radial-gradient(circle at 50% 56%, #000 9%, #ff9a3c 11%, #3a1206 22%, #020108 45%)'; return; }
+
+const VS = 'attribute vec2 p; void main(){ gl_Position = vec4(p, 0., 1.); }';
+const FS = `
+precision highp float;
+uniform vec2 uRes; uniform float uTime; uniform vec2 uTilt; uniform float uPulse; uniform float uPulseK;
+const float RIN = 2.6, ROUT = 11.0;
+float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float h31(vec3 p){ p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
+vec3 h33(vec3 p){ p = fract(p * vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yxz + 33.33); return fract((p.xxy + p.yxx) * p.zyx); }
+float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
+  return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
+float fbm(vec2 p){ float s = 0., a = .5; mat2 m = mat2(1.6, 1.2, -1.2, 1.6); for (int i = 0; i < 4; i++) { s += a * vn(p); p = m * p; a *= .5; } return s; }
+float vn3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
+  float a = h31(i), b = h31(i + vec3(1,0,0)), c = h31(i + vec3(0,1,0)), d = h31(i + vec3(1,1,0));
+  float e = h31(i + vec3(0,0,1)), g = h31(i + vec3(1,0,1)), h = h31(i + vec3(0,1,1)), k = h31(i + vec3(1,1,1));
+  return mix(mix(mix(a,b,f.x), mix(c,d,f.x), f.y), mix(mix(e,g,f.x), mix(h,k,f.x), f.y), f.z); }
+mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
+
+vec3 stars(vec3 d, float sc, float th){
+  vec3 q = d * sc; vec3 id = floor(q); vec3 f = fract(q) - .5;
+  vec3 o = h33(id) - .5; float h = h31(id + 7.1);
+  float dist = length(f - o * .7);
+  float b = (smoothstep(.16, 0., dist) * .6 + smoothstep(.05, 0., dist)) * step(th, h);
+  vec3 tint = mix(vec3(1., .78, .6), vec3(.65, .8, 1.), h31(id + 3.3));
+  return tint * b * (0.6 + 2.5 * pow(h, 18.));
+}
+vec3 background(vec3 d, vec3 ds){
+  vec3 c = vec3(0.);
+  // milky band + nebula
+  vec3 bandN = normalize(vec3(.35, 1., .25));
+  float band = exp(-abs(dot(d, bandN)) * 5.);
+  float n = vn3(d * 3.2) * .6 + vn3(d * 7.5) * .3 + vn3(d * 16.) * .1;
+  c += band * (vec3(.13, .06, .20) * smoothstep(.3, .9, n) * 1.6 + vec3(.012, .016, .035));
+  c += vec3(.05, .015, .06) * smoothstep(.55, .85, vn3(d * 2.1 + 4.));
+  c += vec3(.0, .025, .04) * smoothstep(.6, .9, vn3(d * 2.7 - 9.));
+  c += stars(ds, 60., .72) * 1.2 + stars(ds, 140., .55) * (.5 + band) + stars(ds, 30., .93) * 2.;
+  return c;
+}
+
+vec4 disk(vec3 q, float rq, vec3 rdir){
+  // two-phase flow map (Keplerian shear stays bounded)
+  float om = 2.2 / pow(rq, 1.5);
+  float T = uTime * .5, ph1 = fract(T / 18.), ph2 = fract(T / 18. + .5);
+  float w = abs(ph1 - .5) * 2.;
+  float th = atan(q.z, q.x);
+  float a1 = th - om * ph1 * 18., a2 = th - om * ph2 * 18.;
+  vec2 c1 = vec2(cos(a1), sin(a1)), c2 = vec2(cos(a2), sin(a2));
+  float n1 = vn3(vec3(c1 * 2.4, rq * 2.2)) * .55 + vn3(vec3(c1 * 6., rq * 7.5 + 3.)) * .3 + vn3(vec3(c1 * 14., rq * 18.)) * .15;
+  float n2 = vn3(vec3(c2 * 2.4 + 9., rq * 2.2)) * .55 + vn3(vec3(c2 * 6. + 9., rq * 7.5 + 3.)) * .3 + vn3(vec3(c2 * 14. + 9., rq * 18.)) * .15;
+  float n = mix(n1, n2, w);
+  float rings = .75 + .25 * sin(rq * 4.5 + n * 6.);
+  float dens = smoothstep(RIN, RIN + .5, rq) * (1. - smoothstep(ROUT * .45, ROUT, rq));
+  dens *= smoothstep(.15, .85, n) * 1.5 * rings + .08;
+  // temperature and colour
+  float tt = pow(RIN / rq, 1.15);
+  vec3 col = mix(vec3(.9, .22, .05), vec3(1., .62, .26), smoothstep(.15, .6, tt));
+  col = mix(col, vec3(1.15, 1.02, .95), smoothstep(.62, 1., tt));
+  // doppler beaming
+  vec3 vdir = normalize(vec3(-q.z, 0., q.x));
+  float beta = sqrt(.5 / rq);
+  float cosT = dot(vdir, -rdir);
+  float D = sqrt(1. - beta * beta) / (1. - beta * cosT);
+  float boost = pow(D, 3.2);
+  col = mix(col, col * vec3(.75, .9, 1.35), clamp(D - 1., 0., 1.));
+  col = mix(col, col * vec3(1.2, .7, .45), clamp(1. - D, 0., 1.));
+  // pulse
+  float rp = RIN + uPulse * 7.;
+  float wave = exp(-pow((rq - rp) / .9, 2.)) * exp(-uPulse * .35) * uPulseK;
+  float bright = (1.6 * tt + .15) * boost * (1. + 6. * wave);
+  col = mix(col, vec3(.75, .88, 1.2), clamp(wave * 1.2, 0., .8));
+  float a = clamp(dens * .95, 0., 1.);
+  return vec4(col * bright * dens * 1.5, a);
+}
+
+void main(){
+  vec2 uv = (gl_FragCoord.xy - .5 * uRes) / uRes.y;
+  uv.y += .055;
+  float incl = .13 + uTilt.y * .09;
+  float yaw = uTilt.x * .32;
+  vec3 ro = vec3(0., sin(incl), -cos(incl)) * 30.;
+  ro.xz = rot(yaw) * ro.xz;
+  vec3 fw = normalize(-ro), rt = normalize(cross(vec3(0., 1., 0.), fw)), up = cross(fw, rt);
+  float roll = -.08 + uTilt.x * .04;
+  uv = rot(roll) * uv;
+  vec3 rd = normalize(fw * 1.75 + uv.x * rt + uv.y * up);
+
+  vec3 p = ro, v = rd;
+  vec3 hv = cross(p, v); float h2 = dot(hv, hv);
+  vec3 col = vec3(0.); float Tr = 1.; float glow = 0.;
+  bool hit = false;
+  for (int i = 0; i < 90; i++) {
+    float r2 = dot(p, p), r = sqrt(r2);
+    float dt = clamp(.085 * r, .025, 1.4);
+    vec3 acc = -1.5 * h2 * p / (r2 * r2 * r);
+    v += acc * dt;
+    vec3 pn = p + v * dt;
+    if (p.y * pn.y < 0.) {
+      float f = p.y / (p.y - pn.y);
+      vec3 q = mix(p, pn, f); float rq = length(q.xz);
+      if (rq > RIN * .9 && rq < ROUT) {
+        vec4 d = disk(q, rq, normalize(v));
+        col += Tr * d.rgb; Tr *= 1. - d.a;
+      }
+    }
+    // thin volumetric haze around the disk + photon-ring glow
+    float rr = length(pn.xz);
+    glow += dt * exp(-abs(pn.y) * 3.5) * smoothstep(ROUT, RIN, rr) * smoothstep(RIN * .7, RIN * 1.3, rr) * .012;
+    glow += dt * .014 * exp(-pow((r - 1.6) * 3., 2.));
+    p = pn;
+    if (r < 1.02) { hit = true; Tr = 0.; break; }
+    if (r > 36. && dot(p, v) > 0.) break;
+    if (Tr < .02) break;
+  }
+  if (!hit) { vec3 dv = normalize(v); col += Tr * background(dv, normalize(mix(rd, dv, .5))); }
+  col += glow * vec3(1., .55, .25) * (1. + uPulseK * exp(-uPulse * .8));
+  // tone map + grade
+  col = vec3(1.) - exp(-col * 1.25);
+  col = pow(col, vec3(.92, .96, 1.02));
+  vec2 q = gl_FragCoord.xy / uRes;
+  col *= .55 + .45 * pow(16. * q.x * q.y * (1. - q.x) * (1. - q.y), .22);
+  col += (h21(gl_FragCoord.xy + fract(uTime) * 91.) - .5) / 255.;
+  gl_FragColor = vec4(col, 1.);
+}`;
+
+function sh(type, src) { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.error(gl.getShaderInfoLog(s)); } return s; }
+const prog = gl.createProgram();
+gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+gl.bindAttribLocation(prog, 0, 'p'); gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+const U = n => gl.getUniformLocation(prog, n);
+const uRes = U('uRes'), uTime = U('uTime'), uTilt = U('uTilt'), uPulse = U('uPulse'), uPulseK = U('uPulseK');
+
+const BUDGET = 820000; // max shaded pixels per frame
+function resize() {
+  const dpr = Math.min(1.5, devicePixelRatio || 1);
+  let w = innerWidth * dpr, h = innerHeight * dpr;
+  const k = Math.min(1, Math.sqrt(BUDGET / (w * h)));
+  cv.width = Math.max(1, Math.round(w * k)); cv.height = Math.max(1, Math.round(h * k));
+  gl.viewport(0, 0, cv.width, cv.height);
+}
+let rt = 0; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(resize, 100); });
+resize();
+
+const M = { x: 0, y: 0, last: -1e9 };
+addEventListener('mousemove', e => { M.x = e.clientX / innerWidth * 2 - 1; M.y = e.clientY / innerHeight * 2 - 1; M.last = performance.now(); });
+let pulse = 99, pulseK = 0;
+addEventListener('mousedown', () => { pulse = 0; pulseK = 1; });
+
+let last = performance.now(), t = 40, tx = 0, ty = 0, autoP = 9;
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (document.hidden) { last = now; return; }
+  let dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = Math.max(last, now);
+  dt *= P.speed * (RM.matches ? 0.25 : 1);
+  t += dt; pulse += dt;
+  const idle = performance.now() - M.last > 5000;
+  const gx = idle ? Math.sin(t * 0.045) * 0.55 : M.x, gy = idle ? Math.sin(t * 0.031 + 1) * 0.5 : -M.y;
+  tx += (gx - tx) * Math.min(1, dt * 0.9); ty += (gy - ty) * Math.min(1, dt * 0.9);
+  if (idle && !RM.matches) { autoP -= dt; if (autoP < 0) { pulse = 0; pulseK = 0.45; autoP = 16 + Math.random() * 10; } }
+  gl.uniform2f(uRes, cv.width, cv.height);
+  gl.uniform1f(uTime, t);
+  gl.uniform2f(uTilt, tx, ty);
+  gl.uniform1f(uPulse, pulse); gl.uniform1f(uPulseK, pulseK);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Combine
 import SwiftUI
 
@@ -33,7 +34,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .removeDuplicates()
             .sink { TrueQuit.shared.setEnabled($0) }
             .store(in: &cancellables)
+        applyTestPage()
         openSettings()
+        runLanguageSwitchSelfTest()
+    }
+
+    /// เปิดหน้าที่ต้องการตอนเริ่มเพื่อถ่ายภาพทดสอบ: `MWP_TEST_PAGE=discover`, `settings:clock`, `library:details`
+    private func applyTestPage() {
+        guard let spec = ProcessInfo.processInfo.environment["MWP_TEST_PAGE"] else { return }
+        let parts = spec.split(separator: ":").map(String.init)
+        let nav = Navigator.shared
+        if let page = AppPage(rawValue: parts[0]) { nav.page = page }
+        if parts.count > 1 {
+            if let s = SettingsSection(rawValue: parts[1]) { nav.settingsSection = s }
+            if parts[1] == "details" { nav.showActiveDetails = true }
+        }
+    }
+
+    /// ทดสอบสลับภาษาระหว่างรันด้วย `MWP_TEST_LANG_SWITCH=ja,ar,th` (ผู้ใช้ทั่วไปไม่มีผล)
+    private func runLanguageSwitchSelfTest() {
+        guard let codes = ProcessInfo.processInfo.environment["MWP_TEST_LANG_SWITCH"]?.split(separator: ",") else { return }
+        for (i, code) in codes.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i + 1) * 3) {
+                if let lang = AppLanguage.all.first(where: { $0.code == code }) { Localizer.shared.set(lang) }
+            }
+        }
     }
 
     private func setupStatusItem() {
@@ -47,18 +72,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         let c = Store.shared.config
         menu.removeAllItems()
-        menu.addItem(item("ภาพพื้นหลังเคลื่อนไหว", #selector(toggleWallpaper), on: c.wallpaperMode != .off))
-        menu.addItem(item("นาฬิกาบนเดสก์ท็อป", #selector(toggleClock), on: c.showClock))
+        menu.addItem(item(tr("Live wallpaper"), #selector(toggleWallpaper), on: c.wallpaperMode != .off))
+        menu.addItem(item(tr("Desktop clock"), #selector(toggleClock), on: c.showClock))
         let f = FeatureStore.shared.config
-        menu.addItem(item("ขอบหน้าต่าง", #selector(toggleBorders), on: f.borderEnabled))
-        menu.addItem(item("จัดหน้าต่างด้วยคีย์ลัด", #selector(toggleSnap), on: f.snapEnabled))
-        menu.addItem(item("แถบเมนูแบบกำหนดเอง", #selector(toggleBar), on: f.barEnabled))
-        menu.addItem(item("ออกจากแอปเมื่อปิดหน้าต่างสุดท้าย", #selector(toggleTrueQuit), on: c.trueQuitEnabled))
+        menu.addItem(item(tr("Window borders"), #selector(toggleBorders), on: f.borderEnabled))
+        menu.addItem(item(tr("Snap windows with shortcuts"), #selector(toggleSnap), on: f.snapEnabled))
+        menu.addItem(item(tr("Custom menu bar"), #selector(toggleBar), on: f.barEnabled))
+        menu.addItem(item(tr("Quit apps when last window closes"), #selector(toggleTrueQuit), on: c.trueQuitEnabled))
         menu.addItem(.separator())
-        menu.addItem(item("โหลดภาพพื้นหลังใหม่", #selector(reloadWallpaper)))
-        menu.addItem(item("การตั้งค่า…", #selector(openSettings), key: ","))
+        menu.addItem(item(tr("Reload wallpaper"), #selector(reloadWallpaper)))
+        menu.addItem(item(tr("Settings…"), #selector(openSettings), key: ","))
         menu.addItem(.separator())
-        menu.addItem(item("ออกจาก MacWallpaperPro", #selector(quit), key: "q"))
+        menu.addItem(item(tr("Quit MacWallpaperPro"), #selector(quit), key: "q"))
     }
 
     private func item(_ title: String, _ action: Selector, key: String = "", on: Bool? = nil) -> NSMenuItem {
@@ -88,11 +113,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                              backing: .buffered, defer: false)
             w.title = "MacWallpaperPro"
-            w.toolbarStyle = .unified
+            // กรอบหน้าต่างทำเองทั้งหมด: ซ่อน titlebar (คงปุ่มไฟจราจร) และไม่มี NSToolbar
+            w.titleVisibility = .hidden
+            w.titlebarAppearsTransparent = true
+            w.titlebarSeparatorStyle = .none
+            w.appearance = NSAppearance(named: .darkAqua)
+            w.backgroundColor = NSColor(red: 0x0E / 255, green: 0x0E / 255, blue: 0x12 / 255, alpha: 1)
+            w.minSize = NSSize(width: 1000, height: 640)
             w.isReleasedWhenClosed = false
-            w.setFrameAutosaveName("MacWallpaperProSettings")
-            w.contentViewController = NSHostingController(rootView: MainView().environmentObject(Store.shared))
+            let host = NSHostingController(rootView: MainView().environmentObject(Store.shared))
+            host.sizingOptions = []
+            w.contentViewController = host
+            w.setContentSize(NSSize(width: 1200, height: 760))
             w.center()
+            // คืนขนาด/ตำแหน่งที่ผู้ใช้ตั้งไว้ (ต้องเรียกหลังใส่ contentViewController ไม่งั้นถูกย่อเป็นขนาดต่ำสุด)
+            w.setFrameAutosaveName("MacWallpaperProSettings")
             settingsWindow = w
         }
         NSApp.activate()

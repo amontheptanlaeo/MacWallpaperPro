@@ -1,96 +1,99 @@
 # MacWallpaperPro — Architecture & Contracts
 
-ส่วนประกอบ 3 ส่วน:
+Three parts:
 
-1. **แอป macOS** (`Sources/MacWallpaperPro`, Swift/SwiftUI, macOS 15+)
-2. **เว็บ** (`web/`, Cloudflare Worker + static assets, D1, R2, Stripe Connect)
-   - `/` หน้าแนะนำและดาวน์โหลดแอป
-   - `/community` ร้าน wallpaper (ฟรีและเสียเงิน)
-3. **สัญญาระหว่างแอปกับเว็บ** (เอกสารนี้) — ทั้งสองฝั่งต้องยึดตามนี้
+1. **macOS app** (`Sources/MacWallpaperPro`, Swift/SwiftUI, macOS 15+)
+2. **Website** (`web/`, Cloudflare Worker + static assets, D1, R2) at **`https://macwallpaper.elizos.com`**
+   - `/` landing page and app download (`/download` → GitHub Releases, R2 fallback)
+   - `/community` free community gallery (browse, live preview, one-click install)
+   - `/community/upload`, `/community/mine` creator pages; `/community/admin` moderation
+   - 17 UI languages, Google AdSense on a few web pages only (never in the app)
+3. **The app ↔ web contract** (this document). Both sides must follow it.
+
+Product model: **everything is free**. No payments, coins or purchases. Downloading and installing
+never needs an account. Accounts exist only for creators (upload) and moderators, via OAuth
+(Google, GitHub). The app has no account or token flow.
 
 ---
 
-## Wallpaper package (MVP)
+## Wallpaper package
 
-- ไฟล์เดียว: `index.html` แบบ self-contained (inline JS/CSS, asset แปลงเป็น data URI) ขนาด **≤ 10 MB**
-- ภาพปก: PNG/JPEG/WebP ขนาด **≤ 2 MB** (แนะนำ 1600×1000)
-- wallpaper ฟังเมาส์ผ่าน DOM event มาตรฐาน (`mousemove`, `mousedown`, `mouseup`, `click`, `pointer*`)
-- ถ้าจะรับสีจากแอป ให้ประกาศ `window.setP = ({c1,c2,c3,speed}) => …` (c* = `[r,g,b]` ค่า 0..1)
-- **ห้ามใช้ network** ตอนรันในแอป: แอปบล็อกทุก request ที่ไม่ใช่ `file:`/`data:`/`blob:`
+- One self-contained `index.html` (inline JS/CSS, assets as data URIs), **≤ 10 MB**
+- Thumbnail: PNG/JPEG/WebP, **≤ 2 MB** (1600×1000 recommended)
+- Category (required): `cute` · `nature` · `cartoon` · `space` · `scifi` · `abstract`
+- Wallpapers read the mouse through standard DOM events (`mousemove`, `mousedown`, `mouseup`, `click`, `pointer*`)
+- To receive colours from the app, declare `window.setP = ({c1,c2,c3,speed}) => …` (c* = `[r,g,b]`, 0..1)
+- **No network** at runtime: the app blocks every request that is not `file:`/`data:`/`blob:`
+
+Bundled wallpapers live in `Wallpapers/<slug>/` with `index.html`, `thumb.jpg` and
+`wallpaper.json` (`{ "id", "title", "description", "tags": [], "category" }`).
+`web/scripts/seed.mjs` imports all of them as approved wallpapers by "MacWallpaperPro".
 
 ## Security model
 
-| ภัย | การป้องกัน |
+| Threat | Defense |
 |---|---|
-| ไฟล์ถูกแก้ระหว่างทาง / เซิร์ฟเวอร์ถูกเจาะ | เซิร์ฟเวอร์เซ็น manifest ด้วย **Ed25519** แอปตรวจลายเซ็นด้วย public key ที่ฝังในแอป และตรวจ SHA-256 ของไฟล์ก่อนติดตั้ง |
-| wallpaper ส่งข้อมูลออก / ติดตามผู้ใช้ / โหลดโค้ดภายนอก | แอปใช้ `WKContentRuleList` บล็อกทุก URL ที่ไม่ใช่ local, ไม่มี JS↔native bridge (ยกเว้นการส่งเคอร์เซอร์เข้าไปทางเดียว), อ่านไฟล์ได้เฉพาะโฟลเดอร์ของตัวเอง |
-| HTML อันตรายบนเว็บ (XSS ต่อผู้ใช้เว็บ) | ไม่ render HTML ที่อัปโหลดบน origin หลักเด็ดขาด ตัวอย่างสดแสดงใน `<iframe sandbox="allow-scripts">` (ไม่มี `allow-same-origin`) ที่เสิร์ฟจาก path `/preview/:id` พร้อม CSP `sandbox allow-scripts; default-src 'self' data: blob: 'unsafe-inline'; connect-src 'none'` |
-| ไฟล์ปลอม / ใหญ่เกิน | ตรวจ magic bytes ของภาพ, จำกัดขนาด, ต้องมี `<html` ใน index.html, คำนวณ SHA-256 ฝั่งเซิร์ฟเวอร์ |
-| wallpaper อันตรายหลุดขึ้นร้าน | ทุกชิ้นเริ่มที่สถานะ `pending` → admin ตรวจและกดอนุมัติก่อนขึ้นร้าน; scanner แจ้งเตือนคำที่น่าสงสัย (`fetch(`, `XMLHttpRequest`, `WebSocket`, `eval(`, `importScripts`, URL ภายนอก) ให้ admin เห็น |
-| บัญชีถูกยึด | รหัสผ่าน PBKDF2-SHA256 (≥ 210,000 รอบ, salt สุ่ม), session cookie `HttpOnly; Secure; SameSite=Lax`, ตรวจ `Origin` ทุก POST, rate limit login/register/upload |
-| ดาวน์โหลดของเสียเงินโดยไม่จ่าย | ไฟล์อยู่ใน R2 แบบ private เท่านั้น ดาวน์โหลดผ่าน Worker ที่ตรวจสิทธิ์ (ฟรี / ซื้อแล้ว / เป็นเจ้าของ) |
-| ปลอม webhook การจ่ายเงิน | ตรวจลายเซ็น `Stripe-Signature` ทุกครั้ง, idempotent ตาม `event.id` |
+| File altered in transit / server compromised | Server signs a manifest with **Ed25519**; the app verifies it with the embedded public key and checks the file's SHA-256 before installing |
+| Wallpaper exfiltrates data / tracks / loads code | App: `WKContentRuleList` blocks every non-local URL, no JS↔native bridge (cursor goes in one way), file access limited to its own folder |
+| Uploaded HTML attacking site visitors (XSS) | Uploaded HTML is never rendered on the main origin. Previews come from `/preview/:id` with CSP `sandbox allow-scripts; default-src 'self' data: blob: 'unsafe-inline'; connect-src 'none'` (opaque origin, no network) and are embedded with `<iframe sandbox="allow-scripts">` (no `allow-same-origin`). The same route also works as a top-level page (the app inspector opens it in a WKWebView). The upload page previews a local file through `/preview-sandbox`, an empty shell with the same CSP that receives the HTML by `postMessage` |
+| Fake / oversized files | Image magic bytes checked, size limits, `<html` required, UTF-8 required, SHA-256 computed server-side |
+| Malicious wallpaper reaching the gallery | Every upload starts as `pending`; a moderator approves it. A scanner flags `fetch(`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon`, `eval(`, `new Function(`, `importScripts`, `import(`, string timers, `document.cookie`, `window.open`/`top.location`, `<iframe/object/embed/form>`, workers and external URLs for the moderator |
+| Account takeover | OAuth 2.0 code flow with `state` (bound to an HttpOnly cookie, compared in constant time) and **PKCE S256**; only verified provider emails are accepted. Session cookie `HttpOnly; Secure; SameSite=Lax`, stored as SHA-256 only, 30 days. `Origin` checked on every POST. Rate limits on sign-in, dev sign-in and upload |
+| Dev backdoor in production | `POST /auth/dev` exists only when `ENVIRONMENT=development` (set in `.dev.vars`); otherwise 404 |
+| Direct file access | R2 bucket is private; all reads go through the Worker, which serves only approved items (or the owner's/moderator's own pending items) |
+| Third-party scripts | Main pages: `script-src 'self'`, no third-party hosts. AdSense hosts are allowed **only** on pages that render a configured ad slot (landing footer, browse, detail). Preview routes never get them |
 
-## Money flow (Stripe Connect)
+## HTTP API (Worker, base `https://macwallpaper.elizos.com`)
 
-- ผู้สร้างผูกบัญชี Stripe ผ่าน onboarding (connected account)
-- ผู้ซื้อจ่ายผ่าน Stripe Checkout แบบ destination charge
-- แพลตฟอร์มหัก `application_fee_amount = price × PLATFORM_FEE_PERCENT / 100` (ค่าเริ่มต้น **20%**) ส่วนที่เหลือโอนให้ผู้สร้าง
-- ราคาเป็น THB หน่วยสตางค์ (`price_cents`), 0 = ฟรี, ขั้นต่ำของที่เสียเงิน 20 บาท
-- ระหว่างพัฒนาใช้ Stripe **test mode** เท่านั้น
+All JSON. Error = `{ "error": { "code": string, "message": string } }`
 
-## HTTP API (Worker, base `https://<host>`)
-
-JSON ทั้งหมด, error = `{ "error": { "code": string, "message": string } }`
-
-### Public
-- `GET /api/wallpapers?sort=new|popular&q=&tag=&cursor=` →
-  `{ items: WallpaperSummary[], next: string|null }`
+### Public (used by the app; no account)
+- `GET /api/wallpapers?sort=new|popular&q=&tag=&category=&cursor=` →
+  `{ items: WallpaperSummary[], next: string|null }` (24 per page).
+  `category` is one of `cute|nature|cartoon|space|scifi|abstract`; omit it (or `all`) for every
+  category; an unknown value → 400 `invalid_category`
+- `GET /api/categories` → `{ items: { id, count }[] }` (fixed order: cute, nature, cartoon, space, scifi, abstract)
 - `GET /api/wallpapers/:id` → `WallpaperDetail`
-- `GET /api/wallpapers/:id/manifest` → `SignedManifest` (เฉพาะสถานะ approved)
-- `GET /api/wallpapers/:id/thumb` → ภาพปก
-- `GET /preview/:id` → index.html สำหรับ iframe sandbox (approved เท่านั้น หรือเจ้าของ/admin)
+- `GET /api/wallpapers/:id/manifest` → `SignedManifest` (approved only)
+- `GET /api/wallpapers/:id/thumb` → thumbnail image
+- `GET /api/wallpapers/:id/download` → bytes of index.html (`application/octet-stream`), header
+  `X-Content-SHA256`. **Free for everyone, no auth.** Increments the download count.
+- `GET /preview/:id` → wallpaper HTML under the sandbox CSP (approved, or owner/moderator)
 
-### Auth (เว็บใช้ cookie, แอปใช้ `Authorization: Bearer <token>`)
-- `POST /api/auth/register {email, password, displayName}`
-- `POST /api/auth/login {email, password}`
+### Creator / moderator (web only, session cookie)
+- `GET /signin?next=` page; `GET /auth/google|github/start?next=`; `GET /auth/google|github/callback`
+- `POST /auth/dev` (development only)
 - `POST /api/auth/logout`
-- `GET /api/me` → `{ id, email, displayName, role: "user"|"admin", creator: { connected: bool, payoutsEnabled: bool } }`
-- `GET /app/connect` (หน้าเว็บ ต้องล็อกอิน) → ผู้ใช้กดยืนยัน → สร้าง API token → redirect ไป
-  `macwallpaperpro://auth?token=<token>` (token เก็บใน D1 แบบ SHA-256 hash, อายุ 90 วัน, ยกเลิกได้)
-
-### Download (ฟรี: ไม่ต้องล็อกอิน; เสียเงิน: ต้องซื้อแล้ว)
-- `GET /api/wallpapers/:id/download` → ไบต์ของ index.html (`application/octet-stream`),
-  header `X-Content-SHA256`. ไม่มีสิทธิ์ → 402 `{error:{code:"payment_required"}}`
-
-### Creator
-- `POST /api/wallpapers` (multipart: `title`, `description`, `tags` (comma), `price_cents`, `file` (index.html), `thumb`) → `{ id, status: "pending" }`
-- `GET /api/me/wallpapers` → wallpaper ของฉันพร้อมสถานะ
-- `POST /api/creator/onboard` → `{ url }` (Stripe onboarding link)
-- `GET /api/creator/earnings` → ยอดขาย
-
-### Buyer
-- `POST /api/wallpapers/:id/checkout` → `{ url }` (Stripe Checkout)
-- `GET /api/me/library` → `WallpaperSummary[]` ที่ซื้อแล้ว/ฟรีที่เคยโหลด
-- `POST /api/stripe/webhook` (Stripe เรียก)
-
-### Admin
-- `GET /api/admin/queue` → pending พร้อมผล scanner
+- `GET /api/me` → `{ id, email, displayName, avatarUrl, role: "user"|"admin" }`
+- `POST /api/wallpapers` (multipart: `title`, `description`, `tags` (comma), `category`, `file` (index.html), `thumb`) → `{ id, status: "pending" }`
+- `GET /api/me/wallpapers` → my uploads with `status`, `rejectReason`
+- `GET /api/admin/queue` → pending items with scanner findings
 - `POST /api/admin/wallpapers/:id/approve` / `reject {reason}`
+
+Removed: Stripe checkout/webhook/onboarding/earnings, `/api/me/library`, `/app/connect`,
+bearer tokens and `macwallpaperpro://auth`. The 402 response no longer exists.
+
+### Site utilities
+- `/lang/<code>?next=` sets the language cookie · `/ads.txt` (from `ADSENSE_CLIENT`, 404 when unset)
+- `/robots.txt`, `/sitemap.xml`, `/privacy`
 
 ### Types
 ```ts
 WallpaperSummary = { id: string, title: string, author: { id: string, name: string },
-  priceCents: number, currency: "thb", thumbUrl: string, downloads: number, tags: string[],
+  priceCents: 0,          // always 0; kept so older app builds keep decoding
+  currency: "thb",        // legacy, constant
+  thumbUrl: string,       // relative, e.g. "/api/wallpapers/<id>/thumb"
+  downloads: number, tags: string[],
+  category: "cute"|"nature"|"cartoon"|"space"|"scifi"|"abstract",
   createdAt: string }
 WallpaperDetail = WallpaperSummary & { description: string, version: number, sizeBytes: number,
-  sha256: string, owned: boolean, status: "pending"|"approved"|"rejected" }
+  sha256: string, owned: true /* legacy: everything is free */, status: "pending"|"approved"|"rejected" }
 SignedManifest = { id: string, version: number, sha256: string /* hex */, sizeBytes: number,
   title: string, author: string, signature: string /* base64 Ed25519 */ }
 ```
 
-### Manifest signature
-ข้อความที่เซ็น (UTF-8, คั่นด้วย `\n`, ไม่มี newline ท้าย):
+### Manifest signature (unchanged)
+Signed message (UTF-8, `\n`-separated, no trailing newline):
 ```
 macwallpaperpro-manifest-v1
 <id>
@@ -99,12 +102,23 @@ macwallpaperpro-manifest-v1
 <sizeBytes>
 ```
 - Public key (raw 32 bytes, base64): `4ACj7B0U1mZeAEoA9oiCy4JPSu3xO/CMuQqvRDYX604=`
-- Private key (PKCS#8 DER base64) อยู่ที่ `secrets/signing-private-pkcs8.b64` → Worker secret `SIGNING_KEY_PKCS8`
+- Private key (PKCS#8 DER base64) is in `secrets/signing-private-pkcs8.b64` → Worker secret `SIGNING_KEY_PKCS8`
 
-## Deep links (แอปลงทะเบียน URL scheme `macwallpaperpro`)
-- `macwallpaperpro://install?id=<id>` — ปุ่ม "ใช้ใน MacWallpaperPro" บนเว็บ
-- `macwallpaperpro://auth?token=<token>` — หลังเชื่อมบัญชี
+## Deep links (the app registers the `macwallpaperpro` URL scheme)
+- `macwallpaperpro://install?id=<id>` — fired by every "Install" button on the website.
+  The page then waits ~1.5 s: if the browser kept focus/visibility (app not installed), it shows a
+  "Download MacWallpaperPro (free)" / "I already have it, try again" dialog with a copyable link;
+  if the app takes focus later, the dialog closes itself.
 
-## การติดตั้งในแอป
-`~/Library/Application Support/MacWallpaperPro/Wallpapers/<id>/index.html` + `manifest.json`
-ขั้นตอน: ดึง manifest → ตรวจลายเซ็น → ดาวน์โหลด → ตรวจขนาดและ SHA-256 → เขียนไฟล์แบบ atomic → แสดงในแกลเลอรีของแอป
+## Installing in the app
+`~/Library/Application Support/MacWallpaperPro/Wallpapers/<id>/index.html` + `manifest.json`.
+Steps: fetch manifest → verify signature → download → check size and SHA-256 → atomic write → show in the app's gallery.
+
+## Website internals (summary; details in `web/README.md`)
+- D1 schema `web/migrations/0001_init.sql`: `users`, `identities` (provider links), `sessions`,
+  `categories`, `wallpapers` (with `category`), `rate_limits`
+- i18n: `web/public/i18n/<code>.json` for en, th, zh-Hans, zh-Hant, ja, ko, es, fr, de, it, pt-BR,
+  ru, tr, id, vi, hi, ar (RTL). Language = `?hl=` > `mwp_lang` cookie > `Accept-Language` > en.
+  UI is translated; wallpaper titles/descriptions are shown as the creator wrote them.
+- Ads: `ADSENSE_CLIENT` + `ADSENSE_SLOT_BROWSE|DETAIL|FOOTER`. Nothing ad-related is emitted when unset.
+  Consent banner uses Google Consent Mode v2 with everything denied until the visitor accepts.

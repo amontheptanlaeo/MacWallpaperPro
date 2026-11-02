@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Moon Rabbit Night</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #4a4388; }
+  canvas, #grain { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  #grain { pointer-events: none; opacity: .06; mix-blend-mode: soft-light; background-size: 160px 160px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="grain"></div>
+<script>
+(() => {
+'use strict';
+// Params: c1 = night sky top, c2 = horizon glow, c3 = moon glow
+const P = { c1: [0.30, 0.27, 0.56], c2: [0.93, 0.66, 0.82], c3: [1.0, 0.95, 0.86], speed: 1 };
+const RM = matchMedia('(prefers-reduced-motion: reduce)');
+let motion = RM.matches ? 0.2 : 1;
+RM.addEventListener && RM.addEventListener('change', e => { motion = e.matches ? 0.2 : 1; });
+let dirty = true;
+window.setP = o => {
+  if (!o) return;
+  for (const k of ['c1', 'c2', 'c3']) if (Array.isArray(o[k]) && o[k].length >= 3) { P[k] = o[k].slice(0, 3); dirty = true; }
+  if (typeof o.speed === 'number' && isFinite(o.speed)) P.speed = Math.max(0, Math.min(4, o.speed));
+};
+const rgb = (c, a = 1) => `rgba(${Math.max(0, Math.min(255, c[0] * 255)) | 0},${Math.max(0, Math.min(255, c[1] * 255)) | 0},${Math.max(0, Math.min(255, c[2] * 255)) | 0},${a})`;
+const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const lighten = (c, t) => mix(c, [1, 1, 1], t);
+const mk = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(w)); c.height = Math.max(1, Math.ceil(h)); return c; };
+let seed = 77;
+const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+
+(() => {
+  const g = mk(160, 160), x = g.getContext('2d'), d = x.createImageData(160, 160);
+  for (let i = 0; i < d.data.length; i += 4) { const v = Math.random() * 255 | 0; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255; }
+  x.putImageData(d, 0, 0);
+  document.getElementById('grain').style.backgroundImage = `url(${g.toDataURL()})`;
+})();
+
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1, U = 1;
+let skyCan, moonCan, starCan, sparkCan, trailCans = [], cloudBack = [], cloudFront = [], seatCan;
+const MOON = { x: 0, y: 0, r: 0 };
+const twinkles = [];
+const SC = [[1, 0.86, 0.94], [0.84, 0.86, 1], [1, 0.96, 0.84], [0.84, 1, 0.94], [0.94, 0.84, 1]];
+let sparkCans = [];
+
+function makeSpark(sz, col) {
+  const c = mk(sz, sz), x = c.getContext('2d'), m = sz / 2;
+  const g = x.createRadialGradient(m, m, 0, m, m, m);
+  g.addColorStop(0, rgb(col, 0.8)); g.addColorStop(0.22, rgb(col, 0.25)); g.addColorStop(1, rgb(col, 0));
+  x.fillStyle = g; x.fillRect(0, 0, sz, sz);
+  x.fillStyle = '#fff';
+  const r = m * 0.95, w = m * 0.1;
+  x.beginPath(); x.moveTo(m, m - r); x.quadraticCurveTo(m + w, m - w, m + r, m); x.quadraticCurveTo(m + w, m + w, m, m + r);
+  x.quadraticCurveTo(m - w, m + w, m - r, m); x.quadraticCurveTo(m - w, m - w, m, m - r); x.fill();
+  return c;
+}
+function makeSky() {
+  skyCan = mk(W * DPR, H * DPR);
+  const x = skyCan.getContext('2d'); x.scale(DPR, DPR);
+  seed = 77;
+  const g = x.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, rgb(P.c1)); g.addColorStop(0.45, rgb(mix(P.c1, [0.62, 0.52, 0.82], 0.65))); g.addColorStop(0.8, rgb(mix(P.c2, [0.72, 0.58, 0.86], 0.4))); g.addColorStop(1, rgb(P.c2));
+  x.fillStyle = g; x.fillRect(0, 0, W, H);
+  // star river: a soft diagonal band of pastel haze + dense tiny stars
+  const ax = -W * 0.05, ay = H * 0.05, bx = W * 1.05, by = H * 0.55;
+  const len = Math.hypot(bx - ax, by - ay), ang = Math.atan2(by - ay, bx - ax);
+  x.save(); x.translate(ax, ay); x.rotate(ang);
+  x.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 70; i++) {
+    const t = rnd(), off = (rnd() - 0.5) * H * 0.18, rr = H * (0.06 + rnd() * 0.12);
+    const col = [[1, 0.7, 0.85], [0.7, 0.75, 1], [0.85, 0.7, 1], [0.7, 0.9, 1]][i % 4];
+    const hg = x.createRadialGradient(t * len, off, 0, t * len, off, rr);
+    hg.addColorStop(0, rgb(col, 0.07)); hg.addColorStop(1, rgb(col, 0));
+    x.fillStyle = hg; x.fillRect(t * len - rr, off - rr, rr * 2, rr * 2);
+  }
+  for (let i = 0; i < 1400; i++) {
+    const t = rnd(), g2 = (rnd() + rnd() + rnd() - 1.5) / 1.5, off = g2 * H * 0.13;
+    const a = 0.25 + rnd() * 0.6, r = rnd() < 0.92 ? 0.5 + rnd() * 0.7 : 1.1 + rnd() * 0.8;
+    x.fillStyle = rgb(SC[rnd() * 5 | 0], a);
+    x.beginPath(); x.arc(t * len, off, r * Math.max(0.8, U), 0, 6.283); x.fill();
+  }
+  x.restore();
+  // scattered stars elsewhere
+  for (let i = 0; i < 260; i++) {
+    x.fillStyle = `rgba(255,250,255,${0.2 + rnd() * 0.5})`;
+    x.beginPath(); x.arc(rnd() * W, rnd() * H * 0.8, (0.4 + rnd() * 0.9) * Math.max(0.8, U), 0, 6.283); x.fill();
+  }
+  // horizon glow
+  const hz = x.createLinearGradient(0, H * 0.6, 0, H);
+  hz.addColorStop(0, rgb(P.c2, 0)); hz.addColorStop(1, rgb(lighten(P.c2, 0.2), 0.45));
+  x.fillStyle = hz; x.fillRect(0, 0, W, H);
+}
+function makeMoon() {
+  const R = MOON.r, S = R * 5.2;
+  moonCan = mk(S * DPR, S * DPR);
+  const x = moonCan.getContext('2d'); x.scale(DPR, DPR);
+  const m = S / 2;
+  // bloom
+  let g = x.createRadialGradient(m, m, R * 0.8, m, m, S / 2);
+  g.addColorStop(0, rgb(P.c3, 0.5)); g.addColorStop(0.18, rgb(mix(P.c3, [1, 0.8, 0.92], 0.4), 0.2)); g.addColorStop(0.5, rgb([0.9, 0.8, 1], 0.06)); g.addColorStop(1, rgb([0.9, 0.8, 1], 0));
+  x.fillStyle = g; x.fillRect(0, 0, S, S);
+  // disc
+  g = x.createRadialGradient(m - R * 0.25, m - R * 0.25, R * 0.1, m, m, R);
+  g.addColorStop(0, '#fffdf6'); g.addColorStop(0.7, rgb(mix(P.c3, [1, 0.97, 0.92], 0.5))); g.addColorStop(1, rgb(mix(P.c3, [1, 0.86, 0.88], 0.5)));
+  x.save(); x.shadowColor = rgb(P.c3, 1); x.shadowBlur = R * 0.25;
+  x.fillStyle = g; x.beginPath(); x.arc(m, m, R, 0, 6.283); x.fill(); x.restore();
+  // soft craters (pastel)
+  x.save(); x.beginPath(); x.arc(m, m, R, 0, 6.283); x.clip();
+  seed = 5;
+  for (let i = 0; i < 11; i++) {
+    const a = rnd() * 6.28, d = Math.sqrt(rnd()) * R * 0.75, cr = R * (0.05 + rnd() * 0.13);
+    const cx = m + Math.cos(a) * d, cy = m + Math.sin(a) * d;
+    const cg = x.createRadialGradient(cx + cr * 0.2, cy + cr * 0.2, 0, cx, cy, cr);
+    cg.addColorStop(0, 'rgba(240,210,225,.35)'); cg.addColorStop(0.8, 'rgba(240,210,225,.18)'); cg.addColorStop(1, 'rgba(240,210,225,0)');
+    x.fillStyle = cg; x.beginPath(); x.arc(cx, cy, cr, 0, 6.283); x.fill();
+  }
+  // limb shading
+  g = x.createRadialGradient(m - R * 0.3, m - R * 0.3, R * 0.6, m, m, R * 1.05);
+  g.addColorStop(0, 'rgba(230,200,230,0)'); g.addColorStop(1, 'rgba(230,190,225,.35)');
+  x.fillStyle = g; x.fillRect(0, 0, S, S);
+  x.restore();
+  MOON.S = S;
+}
+function makeCloud(w, lit, dark) {
+  const h = w * 0.5, pad = w * 0.15;
+  const c = mk((w + pad * 2) * DPR, (h + pad * 2) * DPR), x = c.getContext('2d'); x.scale(DPR, DPR);
+  const base = pad + h * 0.8, puffs = [];
+  const n = 5 + (rnd() * 3 | 0);
+  for (let i = 0; i < n; i++) { const t = i / (n - 1), arch = Math.sin(t * Math.PI), r = w * (0.1 + 0.12 * arch + rnd() * 0.04); puffs.push({ x: pad + w * (0.1 + t * 0.8), y: base - r * (0.7 - 0.3 * arch) - arch * h * 0.2, r }); }
+  puffs.push({ x: pad + w * (0.4 + rnd() * 0.2), y: base - h * 0.55, r: w * 0.14 });
+  puffs.sort((a, b) => a.y - b.y);
+  x.save(); x.shadowColor = rgb(lit, 0.5); x.shadowBlur = w * 0.05;
+  for (const p of puffs) {
+    x.fillStyle = rgb(dark); x.beginPath(); x.arc(p.x, p.y, p.r, 0, 6.283); x.fill();
+  }
+  x.restore();
+  for (const p of puffs) {
+    x.save(); x.shadowColor = rgb(dark, 0.6); x.shadowBlur = p.r * 0.4; x.shadowOffsetY = -p.r * 0.04 * DPR;
+    const g = x.createLinearGradient(p.x + p.r * 0.25, p.y - p.r, p.x - p.r * 0.1, p.y + p.r);
+    g.addColorStop(0, rgb(lit)); g.addColorStop(0.4, rgb(mix(lit, dark, 0.12))); g.addColorStop(0.8, rgb(mix(lit, dark, 0.65))); g.addColorStop(1, rgb(dark));
+    x.fillStyle = g; x.beginPath(); x.arc(p.x, p.y, p.r, 0, 6.283); x.fill(); x.restore();
+  }
+  x.globalCompositeOperation = 'destination-out';
+  const cg = x.createLinearGradient(0, base - h * 0.02, 0, base + h * 0.06);
+  cg.addColorStop(0, 'rgba(0,0,0,0)'); cg.addColorStop(1, 'rgba(0,0,0,1)');
+  x.fillStyle = cg; x.fillRect(0, base - h * 0.02, w + pad * 2, h + pad);
+  const o = mk(c.width, c.height), ox = o.getContext('2d'); ox.filter = `blur(${Math.max(0.6, w * 0.003 * DPR)}px)`; ox.drawImage(c, 0, 0);
+  return { can: o, w: w + pad * 2, h: h + pad * 2 };
+}
+
+// rabbit (drawn live: ears twitch, breathing)
+const RB = { x: 0, y: 0, s: 100, earA: 0, earV: 0, nextTwitch: 2, look: 0 };
+function rabbitPath(x, s, ear, breathe) {
+  // sitting rabbit, side view facing left toward... the moon is behind; it gazes up-left
+  x.beginPath();
+  // body
+  x.ellipse(0, -s * 0.32, s * 0.36 * breathe, s * 0.32, 0, 0, 6.283);
+  // haunch
+  x.moveTo(s * 0.32, -s * 0.18); x.ellipse(s * 0.12, -s * 0.2, s * 0.3, s * 0.21, 0, 0, 6.283);
+  // tail
+  x.moveTo(s * 0.48, -s * 0.24); x.arc(s * 0.4, -s * 0.24, s * 0.085, 0, 6.283);
+  // front paw
+  x.moveTo(-s * 0.16, -s * 0.03); x.ellipse(-s * 0.24, -s * 0.04, s * 0.1, s * 0.05, 0, 0, 6.283);
+  // head (tilted up toward the sky)
+  x.moveTo(-s * 0.0, -s * 0.72); x.ellipse(-s * 0.18, -s * 0.73, s * 0.245, s * 0.21, -0.3, 0, 6.283);
+}
+function earPath(x, s, a1, a2) {
+  // two long ears from the top of the head
+  const ear = (bx, by, a, L, bend) => {
+    x.save(); x.translate(bx, by); x.rotate(a);
+    x.moveTo(-s * 0.055, 0);
+    x.bezierCurveTo(-s * 0.08, -L * 0.5, -s * 0.06 + bend * 0.4, -L * 0.92, bend, -L);
+    x.bezierCurveTo(s * 0.06 + bend * 0.4, -L * 0.92, s * 0.08, -L * 0.5, s * 0.055, 0);
+    x.closePath(); x.restore();
+  };
+  x.beginPath();
+  ear(-s * 0.14, -s * 0.86, 0.22 + a1, s * 0.5, -s * 0.02);
+  ear(-s * 0.02, -s * 0.85, 0.5 + a2, s * 0.46, s * 0.07);
+}
+
+function build() {
+  U = Math.min(W, H * 1.6) / 1600;
+  MOON.r = Math.max(70, H * 0.21); MOON.x = W * 0.68; MOON.y = H * 0.5;
+  makeSky(); makeMoon();
+  sparkCans = SC.map(c => makeSpark(64, c));
+  starCan = makeSpark(32, [1, 0.97, 0.92]);
+  trailCans = SC.map(c => { const t = mk(256, 16), x = t.getContext('2d');
+    const g = x.createLinearGradient(0, 0, 256, 0); g.addColorStop(0, rgb(c, 0)); g.addColorStop(0.7, rgb(c, 0.5)); g.addColorStop(1, rgb(lighten(c, 0.6), 1));
+    x.fillStyle = g; x.beginPath(); x.moveTo(0, 8); x.lineTo(250, 3); x.arc(250, 8, 5, -Math.PI / 2, Math.PI / 2); x.closePath(); x.fill();
+    x.globalCompositeOperation = 'destination-in'; const v = x.createLinearGradient(0, 0, 0, 16); v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(0.5, 'rgba(0,0,0,1)'); v.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = v; x.fillRect(0, 0, 256, 16);
+    return t; });
+  seed = 31;
+  const lit = mix(P.c3, [0.98, 0.88, 0.98], 0.5), dark = mix(P.c1, [0.62, 0.52, 0.82], 0.55);
+  cloudBack = []; cloudFront = [];
+  for (let i = 0; i < 5; i++) { const c = makeCloud(W * (0.18 + rnd() * 0.12), mix(lit, [0.86, 0.76, 0.96], 0.5), mix(dark, P.c2, 0.25)); c.x = i / 5 * (W + c.w) - c.w * 0.3 + rnd() * 60; c.y = H * (0.66 + rnd() * 0.08); c.sp = 5 + rnd() * 4; c.ph = rnd() * 6; cloudBack.push(c); }
+  for (let i = 0; i < 4; i++) { const c = makeCloud(W * (0.28 + rnd() * 0.12), mix(lit, [1, 0.9, 0.96], 0.4), mix(dark, P.c2, 0.45)); c.x = i / 4 * (W + c.w) - c.w * 0.4 + rnd() * 60; c.y = H * (0.8 + rnd() * 0.08); c.sp = 9 + rnd() * 5; c.ph = rnd() * 6; cloudFront.push(c); }
+  // the rabbit's cloud
+  seatCan = makeCloud(MOON.r * 1.9, lit, mix(dark, [0.7, 0.62, 0.9], 0.4));
+  RB.s = MOON.r * 0.85; RB.x = MOON.x - MOON.r * 0.12; RB.y = MOON.y + MOON.r * 0.72;
+  twinkles.length = 0;
+  for (let i = 0; i < 70; i++) twinkles.push({ x: rnd() * W, y: rnd() * H * 0.7, s: (5 + rnd() * 9) * Math.max(0.7, U), f: 0.4 + rnd() * 1.2, ph: rnd() * 6.28, c: rnd() * 5 | 0 });
+  dirty = false;
+}
+function resize() {
+  DPR = Math.min(1.5, window.devicePixelRatio || 1);
+  W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  build();
+}
+addEventListener('resize', () => { clearTimeout(resize.t); resize.t = setTimeout(resize, 120); });
+
+// ---------- sparkle trail + shooting stars ----------
+const NS = 240, sp = [];
+for (let i = 0; i < NS; i++) sp.push({ on: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1, s: 1, c: 0, ph: 0 });
+let si = 0;
+function emit(x, y, vx, vy, s, max) { const p = sp[si]; si = (si + 1) % NS; p.on = true; p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.life = 0; p.max = max; p.s = s; p.c = Math.random() * 5 | 0; p.ph = Math.random() * 6.28; }
+const NSS = 6, shoot = [];
+for (let i = 0; i < NSS; i++) shoot.push({ on: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1, c: 0, len: 1 });
+function launch(x, y, big) {
+  let s = null; for (const q of shoot) if (!q.on) { s = q; break; } if (!s) return;
+  const a = Math.PI * (0.78 + Math.random() * 0.12), v = (big ? 900 : 700 + Math.random() * 300) * Math.max(0.7, U);
+  s.on = true; s.x = x; s.y = y; s.vx = Math.cos(a) * v; s.vy = Math.sin(a) * v; s.life = 0; s.max = big ? 1.4 : 1 + Math.random() * 0.5; s.c = Math.random() * 5 | 0; s.len = (big ? 260 : 180) * Math.max(0.7, U);
+}
+const M = { x: -1e4, y: -1e4, last: -1e9, acc: 0 };
+addEventListener('mousemove', e => {
+  if (M.x > -1e3) {
+    const dx = e.clientX - M.x, dy = e.clientY - M.y, d = Math.hypot(dx, dy);
+    M.acc += d;
+    const step = 14 * Math.max(0.7, U);
+    let n = 0;
+    while (M.acc > step && n < 6) { M.acc -= step; n++; const t = Math.random(); emit(M.x + dx * t + (Math.random() - 0.5) * 8, M.y + dy * t + (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 30, 10 + Math.random() * 30, (6 + Math.random() * 10) * Math.max(0.7, U), 0.9 + Math.random() * 0.8); }
+  }
+  M.x = e.clientX; M.y = e.clientY; M.last = performance.now();
+});
+addEventListener('mousedown', e => {
+  launch(e.clientX, e.clientY, true);
+  for (let i = 0; i < 14; i++) { const a = Math.random() * 6.28, v = 40 + Math.random() * 120; emit(e.clientX, e.clientY, Math.cos(a) * v, Math.sin(a) * v, (8 + Math.random() * 10) * Math.max(0.7, U), 0.8 + Math.random() * 0.6); }
+});
+
+let last = performance.now(), now = 0, nextShoot = 2.5;
+function frame(tm) {
+  requestAnimationFrame(frame);
+  if (document.hidden) { last = tm; return; }
+  const rdt = Math.min(0.05, (tm - last) / 1000); last = tm;
+  if (dirty) build();
+  const k = P.speed * motion, dt = rdt * k; now += dt;
+
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.drawImage(skyCan, 0, 0, W, H);
+  // twinkling stars
+  ctx.globalCompositeOperation = 'lighter';
+  for (const t of twinkles) {
+    const tw = Math.pow(0.5 + 0.5 * Math.sin(now * t.f * 2 + t.ph), 3);
+    ctx.globalAlpha = 0.15 + tw * 0.85;
+    const s = t.s * (0.5 + tw * 0.6);
+    ctx.drawImage(sparkCans[t.c], t.x - s, t.y - s, s * 2, s * 2);
+  }
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  // moon (breathing glow)
+  const mg = 1 + Math.sin(now * 0.5) * 0.015;
+  const ms = MOON.S * mg;
+  ctx.drawImage(moonCan, MOON.x - ms / 2, MOON.y - ms / 2, ms, ms);
+  // back clouds
+  for (const c of cloudBack) {
+    c.x += c.sp * U * dt; if (c.x > W + 10) c.x = -c.w - 10;
+    ctx.drawImage(c.can, c.x, c.y + Math.sin(now * 0.3 + c.ph) * 4 * U, c.w, c.h);
+  }
+  // shooting stars
+  if (now > nextShoot) { nextShoot = now + 4 + Math.random() * 6; launch(W * (0.3 + Math.random() * 0.7), H * (0.02 + Math.random() * 0.25), false); }
+  ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+  for (const s of shoot) {
+    if (!s.on) continue;
+    s.life += dt; if (s.life > s.max) { s.on = false; continue; }
+    s.x += s.vx * dt; s.y += s.vy * dt;
+    const lt = s.life / s.max, a = Math.sin(lt * Math.PI);
+    const v = Math.hypot(s.vx, s.vy), ux = s.vx / v, uy = s.vy / v, L = s.len * (0.6 + 0.4 * a);
+    const th = 10 * Math.max(0.8, U);
+    ctx.globalAlpha = a;
+    ctx.setTransform(DPR * ux, DPR * uy, -DPR * uy, DPR * ux, s.x * DPR, s.y * DPR);
+    ctx.drawImage(trailCans[s.c], -L, -th / 2, L, th);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const hs = 22 * Math.max(0.8, U);
+    ctx.drawImage(sparkCans[s.c], s.x - hs, s.y - hs, hs * 2, hs * 2);
+    ctx.globalAlpha = 1;
+    if (Math.random() < 0.5) emit(s.x - ux * 10, s.y - uy * 10, -ux * 30 + (Math.random() - 0.5) * 30, -uy * 30 + 20, (4 + Math.random() * 6) * Math.max(0.7, U), 0.6 + Math.random() * 0.5);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+
+  // rabbit on its cloud
+  const bob = Math.sin(now * 0.6) * 5 * U;
+  ctx.drawImage(seatCan.can, RB.x - seatCan.w * 0.5, RB.y - seatCan.h * 0.42 + bob, seatCan.w, seatCan.h);
+  if (now > RB.nextTwitch) { RB.nextTwitch = now + 2 + Math.random() * 4; RB.earV += (Math.random() < 0.5 ? -1 : 1) * 6; }
+  RB.earV += (-RB.earA * 60 - RB.earV * 6) * rdt; RB.earA += RB.earV * rdt;
+  const breathe = 1 + Math.sin(now * 1.8) * 0.015;
+  const s = RB.s;
+  ctx.save(); ctx.translate(RB.x, RB.y + bob - seatCan.h * 0.08);
+  // rim light: lighter silhouette offset toward the moon, then the dark one
+  const rim = mix(P.c3, [1, 0.9, 0.96], 0.4);
+  const ox = (MOON.x - RB.x) / MOON.r * s * 0.05 + s * 0.012, oy = (MOON.y - RB.y) / MOON.r * s * 0.04 - s * 0.012;
+  ctx.save(); ctx.translate(ox, oy); ctx.fillStyle = rgb(rim, 0.95); ctx.shadowColor = rgb(rim, 0.9); ctx.shadowBlur = s * 0.08;
+  rabbitPath(ctx, s, 0, breathe); ctx.fill(); earPath(ctx, s, RB.earA * 0.1, RB.earA * 0.16 + Math.sin(now * 0.7) * 0.03); ctx.fill(); ctx.restore();
+  const body = mix(P.c1, [0.4, 0.33, 0.62], 0.45);
+  ctx.fillStyle = rgb(body);
+  rabbitPath(ctx, s, 0, breathe); ctx.fill();
+  earPath(ctx, s, RB.earA * 0.1, RB.earA * 0.16 + Math.sin(now * 0.7) * 0.03); ctx.fill();
+  // tiny inner-ear blush + cheek glint
+  ctx.fillStyle = 'rgba(255,190,215,.35)';
+  ctx.beginPath(); ctx.ellipse(-s * 0.28, -s * 0.67, s * 0.055, s * 0.033, -0.3, 0, 6.283); ctx.fill();
+  ctx.restore();
+
+  // front clouds
+  for (const c of cloudFront) {
+    c.x += c.sp * U * dt; if (c.x > W + 10) c.x = -c.w - 10;
+    ctx.drawImage(c.can, c.x, c.y + Math.sin(now * 0.25 + c.ph) * 5 * U, c.w, c.h);
+  }
+
+  // sparkles
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of sp) {
+    if (!p.on) continue;
+    p.life += dt; if (p.life > p.max) { p.on = false; continue; }
+    const dr = Math.pow(0.3, dt); p.vx *= dr; p.vy = p.vy * dr + 12 * dt;
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    const lt = p.life / p.max, a = (1 - lt);
+    const sz = p.s * (0.6 + 0.4 * Math.sin(p.life * 12 + p.ph)) * (1 - lt * 0.5);
+    ctx.globalAlpha = a;
+    ctx.drawImage(sparkCans[p.c], p.x - sz, p.y - sz, sz * 2, sz * 2);
+  }
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+}
+resize();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

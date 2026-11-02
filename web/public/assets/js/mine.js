@@ -1,30 +1,40 @@
-import { api, el, emptyState, formatPrice, num, requireMe, statusBadge } from "./common.js";
+// My uploads: review status of everything the creator has shared.
+import { api, esc, t } from "./site.js";
 
-const list = document.querySelector("[data-list]");
-await requireMe();
-try {
-  const items = await api("/api/me/wallpapers");
-  if (!items.length) {
-    list.replaceChildren(emptyState("upload", "คุณยังไม่ได้อัปโหลดวอลเปเปอร์", el("a", { class: "btn small", href: "/community/upload" }, "อัปโหลดชิ้นแรก")));
-  } else {
-    list.replaceChildren(
-      ...items.map((w) =>
-        el(
-          "article",
-          { class: "row" },
-          el("img", { src: w.thumbUrl, alt: "", loading: "lazy" }),
-          el(
-            "div",
-            { class: "minw0" },
-            el("h3", {}, w.title),
-            el("p", { class: "small muted" }, statusBadge(w.status), "  ", formatPrice(w.priceCents), "  ", `ดาวน์โหลด ${num.format(w.downloads)}`),
-            w.status === "rejected" && w.rejectReason ? el("p", { class: "small" }, `เหตุผล: ${w.rejectReason}`) : null,
-          ),
-          el("div", { class: "row-actions" }, el("a", { class: "btn small", href: `/community/w/${w.id}` }, w.status === "approved" ? "ดูในร้าน" : "ดูตัวอย่าง")),
-        ),
-      ),
-    );
+const list = document.querySelector("[data-mine]");
+const fmtDate = (iso) => {
+  try {
+    return new Intl.DateTimeFormat(document.documentElement.lang, { dateStyle: "medium" }).format(new Date(iso));
+  } catch {
+    return iso.slice(0, 10);
   }
-} catch (e) {
-  list.replaceChildren(el("div", { class: "notice error", role: "alert" }, el("p", {}, e.message)));
+};
+
+async function load() {
+  try {
+    const items = await api("/api/me/wallpapers");
+    list.setAttribute("aria-busy", "false");
+    if (!items.length) {
+      list.innerHTML = `<li class="emptybox"><p>${esc(t("mine.empty"))}</p><a class="btn btn--light" href="/community/upload">${esc(t("nav.upload"))}</a></li>`;
+      return;
+    }
+    list.innerHTML = items
+      .map(
+        (w) => `<li class="urow">
+  <img src="${esc(w.thumbUrl)}" alt="" loading="lazy" width="1600" height="1000">
+  <div>
+    <h2>${esc(w.title)}</h2>
+    <p>${esc(t(`cat.${w.category}`))}, <time datetime="${esc(w.createdAt)}">${esc(fmtDate(w.createdAt))}</time></p>
+    <span class="badge badge--${esc(w.status)}">${esc(t(`mine.${w.status}`))}</span>
+    ${w.status === "rejected" && w.rejectReason ? `<p>${esc(t("mine.reason", { reason: w.rejectReason }))}</p>` : ""}
+  </div>
+  <a class="btn btn--glass btn--sm" href="/community/w/${esc(w.id)}">${esc(t("mine.view"))}</a>
+</li>`,
+      )
+      .join("");
+  } catch (e) {
+    list.setAttribute("aria-busy", "false");
+    list.innerHTML = `<li class="error" role="alert">${esc(e.status === 401 ? t("err.signin") : e.message)}</li>`;
+  }
 }
+if (list) load();

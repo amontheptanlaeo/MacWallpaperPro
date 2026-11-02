@@ -1,7 +1,6 @@
 import Foundation
 
 /// Wallpaper แบบ GPU: หน้า HTML ที่รัน fragment shader (WebGL) เต็มจอ
-/// uniforms ที่ใช้ได้: u_time, u_res, u_c1, u_c2, u_c3
 enum Shaders {
     static func html(fragment: String, scale: Double) -> String {
         template
@@ -12,6 +11,11 @@ enum Shaders {
     static func params(_ c: Config) -> String {
         String(format: "{\"c1\":%@,\"c2\":%@,\"c3\":%@,\"speed\":%.3f}",
                c.color1.js, c.color2.js, c.color3.js, c.speed)
+    }
+
+    /// wallpaper จาก Community: ส่งเฉพาะความเร็ว — สีให้เป็นไปตามที่ผู้สร้างออกแบบไว้
+    static func speedOnly(_ c: Config) -> String {
+        String(format: "{\"speed\":%.3f}", c.speed)
     }
 
     static func source(for preset: WallpaperPreset) -> String {
@@ -137,17 +141,6 @@ enum Shaders {
         float dist=length(gv-off*.8);
         float star=.018/dist*smoothstep(.45,.1,dist)*step(.4,h);
         col+=star*fade*mix(u_c1,u_c2,fract(h*7.)); }
-      gl_FragColor=vec4(col,1.);
-    }
-    """
-
-    static let defaultCustom = """
-    // เขียน GLSL ได้อิสระ — uniforms: u_time, u_res, u_c1, u_c2, u_c3
-    void main(){
-      vec2 uv=(gl_FragCoord.xy-.5*u_res)/u_res.y;
-      float r=length(uv), a=atan(uv.y,uv.x);
-      float v=sin(r*18.-u_time*2.+sin(a*6.+u_time)*1.5);
-      vec3 col=mix(u_c3,mix(u_c1,u_c2,.5+.5*sin(a*3.+u_time)),smoothstep(.2,1.,v)*exp(-r*1.4));
       gl_FragColor=vec4(col,1.);
     }
     """

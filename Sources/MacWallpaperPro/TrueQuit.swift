@@ -27,7 +27,7 @@ final class TrueQuit: ObservableObject {
         guard !isRunning else { return }
         isTrusted = AXIsProcessTrusted()
         guard isTrusted else {
-            requestTrust()
+            // ไม่เด้งหน้าต่างขอสิทธิ์เองตอนเปิดแอป — ขอเฉพาะตอนผู้ใช้กดปุ่มในหน้าตั้งค่า
             // รอจนผู้ใช้อนุญาตใน System Settings แล้วเริ่มเอง
             trustTimer?.invalidate()
             trustTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] t in
@@ -108,7 +108,7 @@ final class TrueQuit: ObservableObject {
               !Store.shared.config.trueQuitExclusions.contains(bid),
               let wins = Self.windows(of: AXUIElementCreateApplication(pid)), wins.isEmpty
         else { return }
-        lastEvent = "ออกจาก \(app.localizedName ?? bid) เมื่อ \(Date().formatted(date: .omitted, time: .shortened))"
+        lastEvent = tr("Quit %1$@ at %2$@", app.localizedName ?? bid, Date().formatted(date: .omitted, time: .shortened))
         app.terminate()
     }
 

@@ -75,7 +75,7 @@ final class WindowSnapper: ObservableObject {
             return
         }
 
-        guard AXIsProcessTrusted() else { AXTrust.shared.request(); return }
+        guard AXIsProcessTrusted() else { AXTrust.shared.watch(); return }
         guard let w = AXWin.focusedWindow(pid: pid), !AXWin.isFullScreen(w),
               let ax = AXWin.frame(w),
               let t = target(action, current: AXWin.toCocoa(ax)) else { NSSound.beep(); return }

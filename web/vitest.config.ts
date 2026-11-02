@@ -17,9 +17,14 @@ export default defineConfig(async () => {
           bindings: {
             TEST_MIGRATIONS: migrations,
             SIGNING_KEY_PKCS8: signingKey,
-            STRIPE_SECRET_KEY: "",
-            STRIPE_WEBHOOK_SECRET: "whsec_test_secret",
+            ENVIRONMENT: "development",
             ADMIN_EMAILS: "admin@example.com",
+            // Fake OAuth apps; every provider call is mocked in test/oauth.test.ts.
+            GOOGLE_CLIENT_ID: "google-test-client",
+            GOOGLE_CLIENT_SECRET: "google-test-secret",
+            GITHUB_CLIENT_ID: "github-test-client",
+            GITHUB_CLIENT_SECRET: "github-test-secret",
+            ADSENSE_CLIENT: "",
           },
         },
       }),
