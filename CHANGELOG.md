@@ -9,6 +9,14 @@ in the same sections.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-02
+
+### Added (app)
+- Remove downloaded wallpapers from Library/Discover context menus, the details panel or the Delete key
+- Settings › General › Storage: space used per wallpaper, remove one or all
+- Discover loads more as you scroll (keeps Newest/Popular and filters)
+- 8 public-domain/CC0 video wallpapers in the Community (NASA SVS/JSC, Wikimedia Commons), see `Wallpapers-video/SOURCES.md`
+
 ### Added
 - **Video wallpapers**: MP4/MOV Community wallpapers (up to 60 MB) with credit and license, signed
   with manifest v2 (the kind is part of the signature), streamed to disk while hashing, played muted
@@ -77,5 +85,6 @@ in the same sections.
   signed-in creators (Google or GitHub), moderation queue, privacy policy, 17 languages, AdSense.
 - 18 new Community wallpapers, GPL-3.0 license, security and trademark policies.
 
-[Unreleased]: https://github.com/amontheptanlaeo/MacWallpaperPro/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/amontheptanlaeo/MacWallpaperPro/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/amontheptanlaeo/MacWallpaperPro/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/amontheptanlaeo/MacWallpaperPro/releases/tag/v1.0.0

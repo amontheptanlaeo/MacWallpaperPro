@@ -1,0 +1,18 @@
+{
+  "id": "perpetual-ocean-gulf-stream",
+  "title": "Perpetual Ocean: Gulf Stream",
+  "description": "Swirling ocean currents and eddies trace the Gulf Stream along the U.S. East Coast, from NASA's Perpetual Ocean 2 visualization.",
+  "tags": [
+    "ocean",
+    "currents",
+    "gulf stream",
+    "earth",
+    "visualization",
+    "blue"
+  ],
+  "category": "abstract",
+  "kind": "video",
+  "credit": "NASA/Goddard Space Flight Center Scientific Visualization Studio",
+  "license": "Public domain (NASA)",
+  "sourceUrl": "https://svs.gsfc.nasa.gov/5425/"
+}
