@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// ระบบดีไซน์ของแอป (ดู design-system/MASTER.md) — ห้ามใช้สี/ระยะแบบ hard-code ใน view อื่น
+// The app's design system (see design-system/MASTER.md). Don't hard-code colors or spacing in other views
 
 // MARK: - Tokens
 
@@ -17,20 +17,20 @@ enum Theme {
     static let textSecondary = Color(hex: 0xA1A1AA)
     static let accentStart = Color(hex: 0x7C3AED)
     static let accentEnd = Color(hex: 0xEC4899)
-    /// สีเน้นแบบสีเดียว (ใช้กับ tint ของ control ระบบ เช่น Slider)
+    /// Single accent color (for tinting system controls such as Slider)
     static let accent = Color(hex: 0x9B5CF6)
     static let success = Color(hex: 0x22C55E)
     static let warning = Color(hex: 0xF59E0B)
     static let destructive = Color(hex: 0xEF4444)
-    /// ตัวหนังสือสีแดงบนพื้นผิวเข้ม (#EF4444 ได้ 4.35:1 บน surfaceRaised — ไม่ถึง 4.5)
+    /// Red text on dark surfaces (#EF4444 gives only 4.35:1 on surfaceRaised, below 4.5)
     static let destructiveText = Color(hex: 0xF87171)
 
-    /// ปลายสีชมพูเข้มขึ้น (#DB2777) สำหรับพื้นที่มีตัวหนังสือขาว — ขาวบน #EC4899 ได้แค่ 3.5:1
+    /// Darker pink end (#DB2777) for areas with white text: white on #EC4899 is only 3.5:1
     static let accentTextSafeEnd = Color(hex: 0xDB2777)
-    /// พื้นปุ่ม/ชิป/แถบเลือก ที่มีตัวหนังสือขาว (≥ 4.6:1 ทั้งเส้น)
+    /// Background for buttons/chips/selection bars with white text (≥ 4.6:1 along the whole gradient)
     static let accentGradient = LinearGradient(colors: [accentStart, accentTextSafeEnd], startPoint: .leading, endPoint: .trailing)
     static let accentGradientTextSafeDiagonal = LinearGradient(colors: [accentStart, accentTextSafeEnd], startPoint: .topLeading, endPoint: .bottomTrailing)
-    /// ขอบไฮไลต์ (ไม่มีตัวหนังสือ) ใช้สีเต็มของแบรนด์
+    /// Highlight borders (no text) use the full brand colors
     static let accentGradientDiagonal = LinearGradient(colors: [accentStart, accentEnd], startPoint: .topLeading, endPoint: .bottomTrailing)
 }
 
@@ -76,7 +76,7 @@ extension Color {
     }
 }
 
-/// ใช้ animation เมื่อผู้ใช้ไม่ได้เปิด Reduce Motion
+/// Animate only when the user hasn't turned on Reduce Motion
 @MainActor
 func withMotion(_ animation: Animation = Motion.standard, _ body: () -> Void) {
     if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { body() } else { withAnimation(animation, body) }
@@ -84,7 +84,7 @@ func withMotion(_ animation: Animation = Motion.standard, _ body: () -> Void) {
 
 // MARK: - Surfaces
 
-/// การ์ด: ขอบ 1 pt + เงาบาง (elevation ระดับ 1)
+/// Card: 1 pt border + subtle shadow (elevation level 1)
 struct CardBackground: ViewModifier {
     var radius: CGFloat = Radius.card
     var fill: Color = Theme.surface
@@ -104,7 +104,7 @@ extension View {
 
 // MARK: - Buttons
 
-/// ปุ่มหลัก (หนึ่งปุ่มต่อหน้าจอ): ไล่สี accent
+/// Primary button (one per screen): accent gradient
 struct PrimaryButtonStyle: ButtonStyle {
     var fullWidth = false
     func makeBody(configuration: Configuration) -> some View {
@@ -136,7 +136,7 @@ struct PrimaryButtonStyle: ButtonStyle {
     }
 }
 
-/// ปุ่มรอง: พื้นผิวยกขึ้น + ขอบ
+/// Secondary button: raised surface + border
 struct SecondaryButtonStyle: ButtonStyle {
     var fullWidth = false
     var tint: Color = Theme.textPrimary
@@ -168,7 +168,7 @@ struct SecondaryButtonStyle: ButtonStyle {
     }
 }
 
-/// ปุ่มไอคอนอย่างเดียว ขนาดกดได้ ≥ 28 pt — ต้องใส่ accessibilityLabel เสมอ
+/// Icon-only button with a hit target ≥ 28 pt; always give it an accessibilityLabel
 struct IconButtonStyle: ButtonStyle {
     var size: CGFloat = 30
     func makeBody(configuration: Configuration) -> some View {
@@ -195,7 +195,7 @@ struct IconButtonStyle: ButtonStyle {
     }
 }
 
-/// ชิปตัวกรอง/หมวดหมู่: เลือกแล้วเป็นไล่สี accent
+/// Filter/category chip: accent gradient when selected
 struct ChipButtonStyle: ButtonStyle {
     let selected: Bool
     func makeBody(configuration: Configuration) -> some View {
@@ -227,7 +227,7 @@ struct ChipButtonStyle: ButtonStyle {
 
 // MARK: - Controls
 
-/// สวิตช์เปิด/ปิดแบบของแอป — VoiceOver ยังเห็นเป็น Toggle ปกติ
+/// The app's on/off switch; VoiceOver still sees a normal Toggle
 struct SwitchToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         SwitchBody(configuration: configuration)
@@ -259,7 +259,7 @@ struct SwitchToggleStyle: ToggleStyle {
     }
 }
 
-/// ตัวเลือกแบบแบ่งส่วน (ตัวเลือกไม่กี่ตัว) — VoiceOver เห็นเป็น Picker ปกติ
+/// Segmented picker (for a few options); VoiceOver sees a normal Picker
 struct SegmentedControl<Value: Hashable>: View {
     let label: String
     @Binding var selection: Value
@@ -305,7 +305,7 @@ struct SegmentedControl<Value: Hashable>: View {
     }
 }
 
-/// ปุ่มเมนูเลือกค่า (ตัวเลือกเยอะ เช่น ฟอนต์) — ป้ายแสดงค่าปัจจุบัน
+/// Menu button for picking a value (many options, such as fonts); the label shows the current value
 struct MenuPicker<Value: Hashable, Items: View>: View {
     let label: String
     @Binding var selection: Value
@@ -331,7 +331,7 @@ struct MenuPicker<Value: Hashable, Items: View>: View {
     }
 }
 
-/// สไลเดอร์ระบบ + ค่าปัจจุบัน (tabular digits)
+/// System slider + current value (tabular digits)
 struct ValueSlider: View {
     let label: String
     @Binding var value: Double
@@ -361,7 +361,7 @@ struct ValueSlider: View {
     }
 }
 
-/// ช่องค้นหาแบบของแอป
+/// The app's search field
 struct SearchField: View {
     let prompt: String
     @Binding var text: String
@@ -400,7 +400,7 @@ struct SearchField: View {
 
 // MARK: - Settings building blocks
 
-/// กลุ่มการตั้งค่าแบบการ์ด: หัวข้อ + แถวคั่นด้วยเส้น + คำอธิบายท้าย
+/// Settings group card: title + rows with separators + footer text
 struct SettingsGroup<Content: View>: View {
     var title: String? = nil
     var footer: String? = nil
@@ -433,7 +433,7 @@ struct SettingsGroup<Content: View>: View {
     }
 }
 
-/// แถวการตั้งค่า: ชื่อ + คำอธิบาย (ตัดบรรทัดได้) แล้ว control ชิดท้าย
+/// Settings row: title + description (wraps), with the control at the trailing edge
 struct SettingRow<Control: View>: View {
     let title: String
     var subtitle: String? = nil
@@ -467,7 +467,7 @@ struct SettingRow<Control: View>: View {
     }
 }
 
-/// แถวที่ control อยู่ใต้ชื่อ (ใช้ในคอลัมน์แคบ เช่นแผงรายละเอียด)
+/// Row with the control below the title (for narrow columns such as the details panel)
 struct SettingColumn<Control: View>: View {
     let title: String
     var subtitle: String? = nil
@@ -489,7 +489,7 @@ struct SettingColumn<Control: View>: View {
     }
 }
 
-/// แถวสวิตช์
+/// Switch row
 struct SettingToggle: View {
     let title: String
     var subtitle: String? = nil
@@ -502,7 +502,7 @@ struct SettingToggle: View {
     }
 }
 
-/// แถวสถานะ (ไอคอนสี + ข้อความ) — ไม่ใช้สีอย่างเดียวในการสื่อความหมาย
+/// Status row (colored icon + text): never uses color alone to convey meaning
 struct StatusRow<Trailing: View>: View {
     enum Kind { case ok, warning, info }
     let kind: Kind
@@ -547,7 +547,7 @@ extension StatusRow where Trailing == EmptyView {
     }
 }
 
-/// ภาพตัวอย่างในหน้าตั้งค่า (เต็มความกว้างการ์ด)
+/// Preview image on a settings page (full card width)
 struct PreviewCard<Content: View>: View {
     var height: CGFloat = 150
     var dimmed = false
@@ -562,7 +562,7 @@ struct PreviewCard<Content: View>: View {
     }
 }
 
-/// ภาพบนพื้นไล่สีของหน้าตั้งค่า (ใช้แทนหน้าจอ)
+/// Image on a settings page's gradient background (stands in for the screen)
 struct DesktopBackdrop: View {
     var body: some View {
         LinearGradient(colors: [Color(hex: 0x3B1D7A), Color(hex: 0x5B2A6E), Color(hex: 0x14121C)],

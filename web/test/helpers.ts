@@ -1,7 +1,7 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { createSession, sessionCookies } from "../src/lib/auth";
-import { randomId, sha256Hex } from "../src/lib/crypto";
+import { base64ToBytes, randomId, sha256Hex } from "../src/lib/crypto";
 import worker from "../src/index";
 
 export const ORIGIN = "http://example.com";
@@ -58,4 +58,36 @@ export async function insertWallpaper(opts: { ownerId: string; status?: "pending
     .bind(id, opts.ownerId, opts.title ?? "Test " + id, opts.category ?? "abstract", opts.status ?? "approved", sha, html.byteLength, fileKey, thumbKey)
     .run();
   return { id, sha, size: html.byteLength };
+}
+
+/** Minimal ISO-BMFF header ("ftyp" box, brand isom) followed by filler: enough for the server's MP4 check. */
+export function fakeMp4(size = 4096): Uint8Array {
+  const b = new Uint8Array(size);
+  b.set([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0, 0, 2, 0, 0x69, 0x73, 0x6f, 0x6d, 0x6d, 0x70, 0x34, 0x31], 0);
+  for (let i = 24; i < size; i++) b[i] = (i * 31) & 0xff;
+  return b;
+}
+
+/** Insert an approved (or pending) video wallpaper directly, with its bytes in R2. */
+export async function insertVideo(opts: { ownerId: string; status?: "pending" | "approved" | "rejected"; bytes?: Uint8Array; category?: string; draft?: boolean }) {
+  const id = randomId(12);
+  const bytes = opts.bytes ?? fakeMp4();
+  const sha = await sha256Hex(bytes);
+  const fileKey = `wallpapers/${id}/v1/video.mp4`;
+  const thumbKey = `wallpapers/${id}/thumb`;
+  if (!opts.draft) await env.BUCKET.put(fileKey, bytes);
+  await env.BUCKET.put(thumbKey, PNG);
+  await env.DB.prepare(
+    `INSERT INTO wallpapers (id, owner_id, title, description, tags, category, status, version, sha256, size_bytes, file_key, thumb_key, thumb_type,
+       kind, credit, license, source_url, draft)
+     VALUES (?, ?, ?, '', ',test,', ?, ?, 1, ?, ?, ?, ?, 'image/png', 'video', 'NASA Goddard', 'Public domain (NASA)', 'https://svs.gsfc.nasa.gov/1', ?)`,
+  )
+    .bind(id, opts.ownerId, "Video " + id, opts.category ?? "space", opts.status ?? "approved", opts.draft ? "" : sha, opts.draft ? 0 : bytes.byteLength, fileKey, thumbKey, opts.draft ? 1 : 0)
+    .run();
+  return { id, sha, size: bytes.byteLength, bytes };
+}
+
+/** Public key the manifests in this test run are signed with (real or ephemeral, see vitest.config.ts). */
+export function signingPublicKey(): Promise<CryptoKey> {
+  return crypto.subtle.importKey("raw", base64ToBytes(env.TEST_SIGNING_PUBLIC_KEY), { name: "Ed25519" }, false, ["verify"]);
 }

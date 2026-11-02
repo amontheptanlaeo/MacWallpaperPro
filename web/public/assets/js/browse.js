@@ -21,6 +21,7 @@ const state = (() => {
     q: p.get("q") || "",
     sort: p.get("sort") === "popular" ? "popular" : "new",
     category: p.get("category") || "all",
+    kind: p.get("kind") === "video" ? "video" : "all",
     next: gallery?.dataset.next || null,
     count: (gridA?.children.length || 0) + (gridB?.children.length || 0),
     loading: false,
@@ -32,6 +33,7 @@ function query(cursor) {
   const p = new URLSearchParams({ sort: state.sort });
   if (state.q) p.set("q", state.q);
   if (state.category !== "all") p.set("category", state.category);
+  if (state.kind === "video") p.set("kind", "video");
   if (cursor) p.set("cursor", cursor);
   return p;
 }
@@ -41,21 +43,35 @@ function syncUrl() {
   if (p.get("sort") === "new") p.delete("sort");
   const qs = p.toString();
   history.replaceState(null, "", `/community${qs ? "?" + qs : ""}`);
+  for (const a of chips?.querySelectorAll("[data-kind]") || []) {
+    const on = state.kind === "video";
+    if (on) a.setAttribute("aria-current", "true");
+    else a.removeAttribute("aria-current");
+    const vp = query(null);
+    vp.delete("sort");
+    vp.delete("category");
+    if (state.sort === "popular") vp.set("sort", "popular");
+    vp.set("kind", "video");
+    a.href = `/community?${vp}`;
+  }
   for (const a of chips?.querySelectorAll("[data-category]") || []) {
-    const on = a.dataset.category === state.category;
+    const on = state.kind !== "video" && a.dataset.category === state.category;
     if (on) a.setAttribute("aria-current", "true");
     else a.removeAttribute("aria-current");
     const cp = query(null);
     cp.delete("sort");
+    cp.delete("kind");
     if (state.sort === "popular") cp.set("sort", "popular");
     if (a.dataset.category === "all") cp.delete("category");
     else cp.set("category", a.dataset.category);
     const s = cp.toString();
     a.href = `/community${s ? "?" + s : ""}`;
   }
-  if (h1) h1.textContent = state.category === "all" ? t("browse.title") : t(`cat.${state.category}`);
+  if (h1) h1.textContent = state.kind === "video" ? t("browse.videos") : state.category === "all" ? t("browse.title") : t(`cat.${state.category}`);
   const hidden = form?.querySelector('input[name="category"]');
   if (hidden) hidden.value = state.category === "all" ? "" : state.category;
+  const hiddenKind = form?.querySelector('input[name="kind"]');
+  if (hiddenKind) hiddenKind.disabled = state.kind !== "video";
 }
 
 function setFoot() {
@@ -125,10 +141,16 @@ if (gallery && form) {
     refilter();
   });
   chips?.addEventListener("click", (e) => {
-    const a = e.target.closest("[data-category]");
+    const a = e.target.closest("[data-category], [data-kind]");
     if (!a || e.metaKey || e.ctrlKey || e.shiftKey) return;
     e.preventDefault();
-    state.category = a.dataset.category;
+    if (a.dataset.kind === "video") {
+      state.kind = "video";
+      state.category = "all";
+    } else {
+      state.kind = "all";
+      state.category = a.dataset.category;
+    }
     refilter();
   });
   more?.addEventListener("click", () => load({ reset: false }));

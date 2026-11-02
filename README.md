@@ -8,7 +8,13 @@
   Live, interactive wallpapers for macOS — free and open source.<br>
   <a href="https://macwallpaper.elizos.com">Website & Community</a> ·
   <a href="https://macwallpaper.elizos.com/download">Download</a> ·
-  <a href="SECURITY.md">Security</a>
+  <a href="https://macwallpaper.elizos.com/privacy">Privacy</a> ·
+  <a href="SECURITY.md">Security</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+<p align="center">
+  <img src="docs/images/desktop-live.jpg" width="820" alt="The Sakura Breeze live wallpaper on a Mac desktop, with the desktop clock">
 </p>
 
 ---
@@ -29,7 +35,34 @@ MacWallpaperPro turns your desktop into something alive. Wallpapers react to you
 
 Requires **macOS 15 or later**.
 
+## Screenshots
+
+| The app's Discover page | The Community website |
+|---|---|
+| <img src="docs/images/app-discover.jpg" width="480" alt="MacWallpaperPro's Discover page: a grid of Community wallpapers with Get buttons"> | <img src="docs/images/website-community.jpg" width="300" alt="The Community gallery on macwallpaper.elizos.com"> |
+
+## Install
+
+1. Download **MacWallpaperPro.zip** from the [latest GitHub release](https://github.com/amontheptanlaeo/MacWallpaperPro/releases/latest)
+   (or from <https://macwallpaper.elizos.com/download>, which points to the same file).
+2. Double-click the zip to unpack it, then drag **MacWallpaperPro.app** into your **Applications** folder.
+3. Open it. Release builds are signed with a Developer ID and notarized by Apple, so macOS opens them
+   without warnings.
+4. Optional: the window border, window snapping and auto-quit tools need **Accessibility** access.
+   The app asks when you turn one of them on; allow it in **System Settings → Privacy & Security →
+   Accessibility**. Wallpapers, the clock and the Community store work without it.
+
+To update, download the new release and replace the app in Applications. Installed Community
+wallpapers and your settings are kept. To uninstall, quit the app, delete it from Applications and
+optionally remove `~/Library/Application Support/MacWallpaperPro`.
+
+**Privacy:** the app shows no ads, needs no account and only contacts the website to browse and
+download wallpapers; installed wallpapers can't reach the internet. The website keeps only
+anonymous, aggregated counts (downloads and page views by country and referrer, no IP addresses). Details: <https://macwallpaper.elizos.com/privacy>.
+
 ## Build from source
+
+Prerequisites: macOS 15+, Xcode 16 or later (Swift 6 toolchain). For the website: Node.js 22.
 
 ```bash
 ./build.sh                    # builds build/MacWallpaperPro.app
@@ -41,9 +74,16 @@ open build/MacWallpaperPro.app
 To produce a notarized, distributable build:
 
 ```bash
-./release.sh 1.0.0            # build → sign → notarize → staple → dist/MacWallpaperPro-1.0.0.zip
+./release.sh 1.0.0            # build → sign → notarize → staple → dist/MacWallpaperPro.zip
 ./release.sh 1.0.0 --no-notarize
+gh release create v1.0.0 dist/MacWallpaperPro.zip dist/MacWallpaperPro.zip.sha256 --title v1.0.0 --generate-notes
 ```
+
+The release asset must be named `MacWallpaperPro.zip`: the website's `/download` and the install
+link use `releases/latest/download/MacWallpaperPro.zip`. Signing settings come from environment
+variables, so forks can use their own Apple account: `TEAM_ID`, `SIGN_IDENTITY`, `ASC_KEY_ID`,
+`ASC_ISSUER` and `ASC_KEY_PATH` (see the top of `release.sh`; the defaults are the upstream
+maintainer's identifiers).
 
 Regenerate the app icon with `swift scripts/make-icon.swift`.
 
@@ -68,7 +108,23 @@ A wallpaper is a single self-contained `index.html` (≤ 10 MB, no external requ
 
 ## Localization
 
-App strings live in `Localization/<code>.json` (English keys → translation); website strings in `web/public/i18n/<code>.json`. Corrections and new languages are welcome via pull request.
+App strings live in `Localization/<code>.json` (English keys → translation); website strings in `web/public/i18n/<code>.json`. Check them with `python3 scripts/check-localization.py` (app) and `cd web && npm run check:i18n` (website). Corrections and new languages are welcome via pull request.
+
+## Contributing
+
+Bug reports, wallpapers, translations and code are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md)
+and the [Code of Conduct](CODE_OF_CONDUCT.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+Report security problems privately (see [SECURITY.md](SECURITY.md)).
+
+## Support
+
+MacWallpaperPro is free, with no ads in the app and no paid features. If you'd like to support its
+development, thank you:
+
+- [Sponsor on GitHub](https://github.com/sponsors/amontheptanlaeo)
+- [Buy me a coffee on Ko-fi](https://ko-fi.com/amontheptanlaeo)
+
+Starring the repo, sharing a wallpaper or fixing a translation helps just as much.
 
 ## License
 

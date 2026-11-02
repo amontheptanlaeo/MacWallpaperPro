@@ -125,10 +125,10 @@ final class Store: ObservableObject {
         }
     }
 
-    // รวมค่าที่บันทึกไว้ทับค่า default เพื่อให้เพิ่มฟิลด์ใหม่ได้โดยไม่ทำค่าเดิมหาย
+    // Merge the saved values over the defaults so new fields can be added without losing existing values
     private static func load() -> Config {
         let def = Config()
-        // ย้ายค่าจากชื่อเดิม (MyStyle) ครั้งแรก
+        // One-time migration from the old name (MyStyle)
         if UserDefaults.standard.data(forKey: key) == nil,
            let old = UserDefaults(suiteName: "com.mymac.mystyle")?.data(forKey: "MyStyle.config") {
             UserDefaults.standard.set(old, forKey: key)
@@ -139,11 +139,11 @@ final class Store: ObservableObject {
               var base = try? JSONSerialization.jsonObject(with: defData) as? [String: Any]
         else { return def }
         base.merge(saved) { _, new in new }
-        // โหมด shader ที่เขียนเองถูกถอดออกแล้ว → กลับไปใช้ Nebula
+        // The custom shader mode was removed -> fall back to Nebula
         for k in ["wallpaperMode", "lastActiveMode"] where base[k] as? String == "shader" {
             base[k] = WallpaperMode.interactive.rawValue
         }
-        // v2: เลิกใช้ Dock custom และเปลี่ยน wallpaper เริ่มต้นเป็น Interactive
+        // v2: the custom Dock was dropped and the default wallpaper became Interactive
         if (saved["configVersion"] as? Int ?? 1) < 2 {
             base["wallpaperMode"] = WallpaperMode.interactive.rawValue
             base["configVersion"] = Config.currentVersion

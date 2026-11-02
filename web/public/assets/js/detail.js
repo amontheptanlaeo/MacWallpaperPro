@@ -9,6 +9,15 @@ if (frame) {
   setTimeout(ready, 2500);
 }
 
+const video = document.querySelector("[data-live-video]");
+if (video) {
+  const ready = () => video.classList.add("is-ready");
+  if (video.readyState >= 2) ready();
+  else video.addEventListener("loadeddata", ready, { once: true });
+  // Autoplay can be refused (e.g. reduced data); the poster stays visible then.
+  video.play?.().catch(() => {});
+}
+
 const fsBtn = document.querySelector("[data-fullscreen]");
 const screen = document.querySelector(".display__screen");
 if (fsBtn && screen) {

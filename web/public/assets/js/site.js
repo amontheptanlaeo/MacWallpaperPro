@@ -25,6 +25,7 @@ const ICONS = {
   inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+  play: '<path d="M7 4.5v15l12-7.5z"/>',
 };
 export function icon(name, cls = "icon") {
   return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${ICONS[name] || ""}</svg>`;
@@ -60,9 +61,12 @@ export async function api(path, init = {}) {
 
 /** Same markup as the server-rendered card (src/views/components.ts). */
 export function renderCard(w) {
-  return `<article class="card" data-card data-id="${esc(w.id)}">
+  const video = w.kind === "video";
+  return `<article class="card" data-card data-id="${esc(w.id)}" data-kind="${video ? "video" : "html"}">
   <div class="card__media">
     <img src="${esc(w.thumbUrl)}" alt="" width="1600" height="1000" loading="lazy" decoding="async">
+    ${video ? `<video class="card__frame card__video" muted loop playsinline preload="none" disablepictureinpicture tabindex="-1" aria-hidden="true" src="/api/wallpapers/${esc(w.id)}/download"></video>
+    <span class="card__badge">${icon("play", "icon icon--xs")}${esc(t("card.video"))}</span>` : ""}
     <span class="card__live" aria-hidden="true"><span class="dot"></span>${esc(t("card.previewing"))}</span>
   </div>
   <div class="card__body">
@@ -273,6 +277,15 @@ function activate(cardEl) {
   liveCard = cardEl;
   const media = cardEl.querySelector(".card__media");
   if (!media) return;
+  const video = media.querySelector(".card__video");
+  if (video) {
+    // preload="none" until now: the first hover starts the download, muted and looped.
+    video.preload = "auto";
+    if (!video.classList.contains("is-ready")) video.addEventListener("playing", () => video.classList.add("is-ready"), { once: true });
+    video.play().catch(() => {});
+    cardEl.classList.add("is-live");
+    return;
+  }
   let frame = media.querySelector("iframe");
   if (!frame) {
     frame = document.createElement("iframe");
@@ -292,6 +305,11 @@ function activate(cardEl) {
 function deactivate(cardEl) {
   cardEl.classList.remove("is-live");
   if (liveCard === cardEl) liveCard = null;
+  const video = cardEl.querySelector(".card__video");
+  if (video) {
+    video.pause();
+    return;
+  }
   const frame = cardEl.querySelector(".card__frame");
   if (frame) setTimeout(() => !cardEl.classList.contains("is-live") && frame.remove(), 450);
 }

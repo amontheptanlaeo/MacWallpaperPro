@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in the app or on the website doesn't work as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Security problems** must not be reported here: use
+        [private vulnerability reporting](https://github.com/amontheptanlaeo/MacWallpaperPro/security/advisories/new).
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where does it happen?
+      options:
+        - macOS app
+        - Website / Community store
+        - A specific wallpaper
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Click …
+        3. See …
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: MacWallpaperPro → About (leave empty for website-only issues)
+      placeholder: "1.0.0"
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac model
+      placeholder: "macOS 15.4, MacBook Air M2"
+  - type: input
+    id: browser
+    attributes:
+      label: Browser (website issues)
+      placeholder: "Safari 18"
+  - type: dropdown
+    id: language
+    attributes:
+      label: App or site language
+      options: [English, Thai, Chinese (Simplified), Chinese (Traditional), Japanese, Korean, Spanish, French, German, Italian, Portuguese (Brazil), Russian, Turkish, Indonesian, Vietnamese, Hindi, Arabic]
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots, logs or anything else
+      description: Please remove personal information before posting.

@@ -1,5 +1,5 @@
 import type { User } from "./auth";
-import type { ScanFinding } from "./validate";
+import type { ScanFinding, WallpaperKind } from "./validate";
 
 export interface WallpaperRow {
   id: string;
@@ -20,6 +20,12 @@ export interface WallpaperRow {
   downloads: number;
   scan_flags: string;
   created_at: string;
+  // migrations/0002_video.sql
+  kind: WallpaperKind;
+  credit: string | null;
+  license: string | null;
+  source_url: string | null;
+  draft: number;
 }
 
 export const WP_SELECT = `SELECT w.*, u.display_name AS author_name FROM wallpapers w JOIN users u ON u.id = w.owner_id`;
@@ -38,6 +44,8 @@ export interface WallpaperSummary {
   downloads: number;
   tags: string[];
   category: string;
+  /** "html" (index.html, manifest v1) or "video" (video.mp4, manifest v2). Always present. */
+  kind: WallpaperKind;
   createdAt: string;
 }
 
@@ -48,6 +56,10 @@ export interface WallpaperDetail extends WallpaperSummary {
   sha256: string;
   owned: boolean;
   status: "pending" | "approved" | "rejected";
+  /** Attribution (videos). null for HTML wallpapers. */
+  credit: string | null;
+  license: string | null;
+  sourceUrl: string | null;
 }
 
 export function parseTags(s: string): string[] {
@@ -66,6 +78,7 @@ export function toSummary(r: WallpaperRow): WallpaperSummary {
     downloads: r.downloads,
     tags: parseTags(r.tags),
     category: r.category,
+    kind: r.kind === "video" ? "video" : "html",
     createdAt: r.created_at,
   };
 }
@@ -80,7 +93,15 @@ export function toDetail(r: WallpaperRow): WallpaperDetail {
     // Kept for old app builds: every approved wallpaper is free, so it is always installable.
     owned: true,
     status: r.status,
+    credit: r.credit ?? null,
+    license: r.license ?? null,
+    sourceUrl: r.source_url ?? null,
   };
+}
+
+/** File name inside the package, and the MIME type served by /download. */
+export function packageFile(kind: WallpaperKind): { name: string; type: string } {
+  return kind === "video" ? { name: "video.mp4", type: "video/mp4" } : { name: "index.html", type: "application/octet-stream" };
 }
 
 export function parseScan(s: string): ScanFinding[] {

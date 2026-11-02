@@ -1,4 +1,4 @@
-// วาดไอคอนแอป (vector) แล้วสร้าง Resources/AppIcon.icns
+// Draws the app icon (vector) and builds Resources/AppIcon.icns
 //   swift scripts/make-icon.swift
 import AppKit
 

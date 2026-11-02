@@ -31,7 +31,7 @@ describe("root domain (elizos.com)", () => {
   });
 
   it("never redirects to another host (//host paths)", async () => {
-    for (const path of ["//example.org", "//example.org/x?y=1", "///example.org", "/\\example.org"]) {
+    for (const path of ["//example.org", "//example.org/x?y=1", "///example.org", "/\\example.org", "/%2F%2Fexample.org", "/%5Cexample.org"]) {
       const res = await get("https://elizos.com" + path);
       expect(res.status).toBe(301);
       expect(new URL(res.headers.get("Location")!).origin).toBe("https://macwallpaper.elizos.com");

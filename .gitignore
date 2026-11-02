@@ -1,7 +1,11 @@
-# ความลับ — ห้าม commit เด็ดขาด
+# Secrets: never commit these
 secrets/
 *.p8
+*.p12
 *.pem
+*.key
+*.cer
+*.mobileprovision
 .dev.vars
 .env
 .env.*
@@ -11,10 +15,19 @@ secrets/
 build/
 dist/
 DerivedData/
+.swiftpm/
+xcuserdata/
+*.xcuserstate
 
 # web
 node_modules/
 .wrangler/
 
-# macOS
+# macOS and editors
 .DS_Store
+.vscode/
+.idea/
+*.log
+
+# Community video wallpapers (binaries hosted separately; see Wallpapers-video/SOURCES.md)
+Wallpapers-video/*/video.mp4

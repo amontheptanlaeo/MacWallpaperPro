@@ -1,7 +1,7 @@
 import { escapeHtml } from "./lib/http";
 import { adsTxt, adsenseMeta } from "./lib/ads";
 import { checkOrigin } from "./lib/auth";
-import { errorResponse, HttpError } from "./lib/http";
+import { errorResponse, HttpError, withHsts } from "./lib/http";
 import * as admin from "./routes/admin";
 import * as creator from "./routes/creator";
 import * as pub from "./routes/public";
@@ -29,7 +29,7 @@ const routes: Route[] = [
   r("GET", "/api/wallpapers/:id/manifest", (_q, e, _c, [id]) => pub.getManifest(e, id)),
   r("GET", "/api/wallpapers/:id/thumb", (q, e, _c, [id]) => pub.getThumb(q, e, id)),
   r("GET", "/api/wallpapers/:id/download", (q, e, c, [id]) => pub.downloadWallpaper(q, e, c, id)),
-  r("GET", "/preview-sandbox", () => pub.previewSandbox()),
+  r("GET", "/preview-sandbox", (q) => pub.previewSandbox(q)),
   r("GET", "/preview/:id", (q, e, _c, [id]) => pub.getPreview(q, e, id)),
   // Account (creators/admins only)
   r("GET", "/api/me", (q, e) => site.me(q, e)),
@@ -40,21 +40,25 @@ const routes: Route[] = [
   // Creator
   r("POST", "/api/wallpapers", (q, e) => creator.uploadWallpaper(q, e)),
   r("GET", "/api/me/wallpapers", (q, e) => creator.myWallpapers(q, e)),
+  r("DELETE", "/api/me", (q, e) => creator.deleteAccount(q, e)),
+  r("PUT", "/api/uploads/:id/video", (q, e, _c, [id]) => creator.uploadVideo(q, e, id)),
   // Admin
   r("GET", "/api/admin/queue", (q, e) => admin.queue(q, e)),
   r("POST", "/api/admin/wallpapers/:id/approve", (q, e, _c, [id]) => admin.review(q, e, id, "approve")),
   r("POST", "/api/admin/wallpapers/:id/reject", (q, e, _c, [id]) => admin.review(q, e, id, "reject")),
+  r("GET", "/api/admin/stats", (q, e) => admin.stats(q, e)),
   // Pages
-  r("GET", "/", (q, e) => site.landing(q, e)),
-  r("GET", "/community/?", (q, e) => site.browse(q, e)),
-  r("GET", "/community/w/:id/?", (q, e, _c, [id]) => site.detail(q, e, id)),
+  r("GET", "/", (q, e, c) => site.landing(q, e, c)),
+  r("GET", "/community/?", (q, e, c) => site.browse(q, e, c)),
+  r("GET", "/community/w/:id/?", (q, e, c, [id]) => site.detail(q, e, c, id)),
   r("GET", "/community/upload/?", (q, e) => site.upload(q, e)),
   r("GET", "/community/mine/?", (q, e) => site.mine(q, e)),
   r("GET", "/community/admin/?", (q, e) => site.admin(q, e)),
+  r("GET", "/community/admin/stats/?", (q, e) => site.adminStats(q, e)),
   r("GET", "/signin/?", (q, e) => site.signin(q, e)),
   r("GET", "/privacy/?", (q, e) => site.privacy(q, e)),
   r("GET", "/lang/([A-Za-z-]{2,7})", (q, _e, _c, [code]) => site.setLanguage(q, code)),
-  r("GET", "/download/?", (q, e) => site.downloadApp(q, e)),
+  r("GET", "/download/?", (q, e, c) => site.downloadApp(q, e, c)),
   r("GET", "/ads.txt", (_q, e) => site.adsTxtRoute(e)),
   r("GET", "/robots.txt", (q, e) => site.robots(q, e)),
   r("GET", "/sitemap.xml", (q, e) => site.sitemap(q, e)),
@@ -115,15 +119,19 @@ function apexResponse(request: Request, env: Env): Response | null {
 
 export default {
   async fetch(request, env, ctx): Promise<Response> {
-    try {
-      const apex = apexResponse(request, env);
-      if (apex) return apex;
-      return await route(request, env, ctx);
-    } catch (e) {
-      const url = new URL(request.url);
-      if (e instanceof HttpError) return errorResponse(e.status, e.code, e.message, e.headers);
-      console.error(JSON.stringify({ msg: "unhandled_error", path: url.pathname, error: String((e as Error)?.stack ?? e) }));
-      return errorResponse(500, "internal_error", "Internal server error.");
-    }
+    return withHsts(await handle(request, env, ctx));
   },
 } satisfies ExportedHandler<Env>;
+
+async function handle(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  try {
+    const apex = apexResponse(request, env);
+    if (apex) return apex;
+    return await route(request, env, ctx);
+  } catch (e) {
+    const url = new URL(request.url);
+    if (e instanceof HttpError) return errorResponse(e.status, e.code, e.message, e.headers);
+    console.error(JSON.stringify({ msg: "unhandled_error", path: url.pathname, error: String((e as Error)?.stack ?? e) }));
+    return errorResponse(500, "internal_error", "Internal server error.");
+  }
+}

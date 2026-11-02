@@ -1,5 +1,6 @@
 // Inline SVG icons (Lucide-style, 24px grid, 1.75 stroke). Decorative by default (aria-hidden).
 const P: Record<string, string> = {
+  coffee: '<path d="M17 8h1a4 4 0 0 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><path d="M6 2v2"/><path d="M10 2v2"/><path d="M14 2v2"/>',
   download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
   install: '<path d="M12 4v10"/><path d="m8 10 4 4 4-4"/><rect x="3" y="15" width="18" height="5" rx="2"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',

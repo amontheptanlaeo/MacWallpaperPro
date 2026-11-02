@@ -8,10 +8,10 @@ import SwiftUI
 
 struct HotKeyCombo: Codable, Equatable, Hashable {
     var keyCode: UInt32
-    var modifiers: UInt32   // cmdKey / shiftKey / optionKey / controlKey ของ Carbon
+    var modifiers: UInt32   // Carbon cmdKey / shiftKey / optionKey / controlKey
 
     static let ctrlOpt = UInt32(controlKey | optionKey)
-    /// ปิดคีย์ลัด (เก็บเป็นค่าแทน เพื่อไม่ให้ตอนโหลดเติมค่าเริ่มต้นกลับมา)
+    /// Shortcut turned off (stored as a value so loading doesn't fill the default back in)
     static let none = HotKeyCombo(keyCode: .max, modifiers: 0)
     var isNone: Bool { keyCode == .max }
 
@@ -28,7 +28,7 @@ struct HotKeyCombo: Codable, Equatable, Hashable {
         if f.contains(.option) { m |= UInt32(optionKey) }
         if f.contains(.shift) { m |= UInt32(shiftKey) }
         if f.contains(.command) { m |= UInt32(cmdKey) }
-        // ต้องมีปุ่มกำกับอย่างน้อยหนึ่งตัวที่ไม่ใช่ Shift เพื่อไม่ชนการพิมพ์ปกติ
+        // Needs at least one modifier other than Shift so it doesn't clash with normal typing
         guard m & ~UInt32(shiftKey) != 0 else { return nil }
         keyCode = UInt32(event.keyCode); modifiers = m
     }
@@ -51,7 +51,7 @@ struct HotKeyCombo: Codable, Equatable, Hashable {
         kVK_F7: "F7", kVK_F8: "F8", kVK_F9: "F9", kVK_F10: "F10", kVK_F11: "F11", kVK_F12: "F12",
     ]
 
-    /// แปลง key code เป็นตัวอักษรตามแป้นพิมพ์ที่ใช้อยู่ (ใช้ layout ASCII เพื่อไม่ให้ขึ้นเป็นภาษาไทย)
+    /// Turn a key code into a character for the current keyboard (uses an ASCII layout so it never shows a non-Latin character)
     static func keyName(_ code: Int) -> String {
         if code == kVK_Space { return tr("Space") }
         if let s = special[code] { return s }
@@ -139,7 +139,7 @@ enum SnapAction: String, Codable, CaseIterable, Identifiable {
 // MARK: - Feature config
 
 struct FeatureConfig: Codable, Equatable {
-    // ขอบหน้าต่าง
+    // Window border
     var borderEnabled = false
     var borderColor = RGBA(0.35, 0.65, 1.0)
     var borderUseGradient = false
@@ -150,17 +150,17 @@ struct FeatureConfig: Codable, Equatable {
     var borderShowInactive = false
     var borderInactiveColor = RGBA(0.6, 0.6, 0.6, 0.5)
 
-    // จัดหน้าต่างด้วยคีย์ลัด
+    // Window snapping with shortcuts
     var snapEnabled = false
     var snapGap = 0.0
-    var snapShortcuts: [String: HotKeyCombo] = SnapAction.defaultShortcuts   // HotKeyCombo.none = ปิดคีย์ลัดนั้น
+    var snapShortcuts: [String: HotKeyCombo] = SnapAction.defaultShortcuts   // HotKeyCombo.none = that shortcut is off
 
-    // ซ่อนไอคอนบนแถบเมนู
+    // Hide menu bar icons
     var hiderEnabled = false
     var hiderAutoRehide = true
     var hiderDelay = 10.0
 
-    // แถบเมนูแบบกำหนดเอง
+    // Custom menu bar
     var barEnabled = false
     var barAllScreens = true
     var barColor = RGBA(0.08, 0.08, 0.10)
@@ -206,7 +206,7 @@ final class FeatureStore: ObservableObject {
         }
     }
 
-    // รวมค่าที่บันทึกไว้ทับค่า default (แบบเดียวกับ Store) เพื่อเพิ่มฟิลด์ใหม่ได้โดยไม่ทำค่าเดิมหาย
+    // Merge the saved values over the defaults (like Store), so new fields can be added without losing existing values
     private static func load() -> FeatureConfig {
         let def = FeatureConfig()
         guard let data = UserDefaults.standard.data(forKey: key),
@@ -218,7 +218,7 @@ final class FeatureStore: ObservableObject {
         guard let merged = try? JSONSerialization.data(withJSONObject: base),
               var cfg = try? JSONDecoder().decode(FeatureConfig.self, from: merged)
         else { return def }
-        // คีย์ลัดของ action ที่เพิ่มมาใหม่ใช้ค่าเริ่มต้น
+        // Newly added actions get their default shortcut
         for a in SnapAction.allCases where cfg.snapShortcuts[a.rawValue] == nil {
             cfg.snapShortcuts[a.rawValue] = a.defaultCombo
         }
@@ -231,7 +231,7 @@ final class FeatureStore: ObservableObject {
     }
 }
 
-// MARK: - Accessibility trust (ใช้ร่วมกันระหว่างขอบหน้าต่างกับการจัดหน้าต่าง)
+// MARK: - Accessibility trust (shared by the window border and window snapping)
 
 @MainActor
 final class AXTrust: ObservableObject {
@@ -241,7 +241,7 @@ final class AXTrust: ObservableObject {
 
     func refresh() { isTrusted = AXIsProcessTrusted() }
 
-    /// ขอสิทธิ์ (แสดงหน้าต่างของระบบ) แล้วเฝ้าดูจนผู้ใช้อนุญาต
+    /// Ask for the permission (shows the system prompt), then watch until the user allows it
     func request() {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         isTrusted = AXIsProcessTrustedWithOptions(opts)
@@ -284,7 +284,7 @@ enum AXWin {
         return (v as! AXUIElement)
     }
 
-    /// กรอบหน้าต่างในพิกัด AX/CG (จุดเริ่มที่มุมซ้ายบนของจอหลัก)
+    /// Window frame in AX/CG coordinates (origin at the top-left of the main display)
     static func frame(_ w: AXUIElement) -> CGRect? {
         var pv: CFTypeRef?, sv: CFTypeRef?
         guard AXUIElementCopyAttributeValue(w, kAXPositionAttribute as CFString, &pv) == .success,
@@ -312,15 +312,15 @@ enum AXWin {
         (attr(w, kAXSubroleAttribute) as String?) == (kAXStandardWindowSubrole as String)
     }
 
-    /// ความสูงของจอหลัก ใช้แปลงพิกัด AX (บนลงล่าง) ↔ Cocoa (ล่างขึ้นบน)
+    /// Main display height, used to convert AX (top-down) <-> Cocoa (bottom-up) coordinates
     @MainActor static var primaryHeight: CGFloat { NSScreen.screens.first?.frame.height ?? 0 }
     @MainActor static func toCocoa(_ r: CGRect) -> CGRect {
         CGRect(x: r.minX, y: primaryHeight - r.maxY, width: r.width, height: r.height)
     }
-    @MainActor static func toAX(_ r: CGRect) -> CGRect { toCocoa(r) }   // การแปลงกลับเป็นสูตรเดียวกัน
+    @MainActor static func toAX(_ r: CGRect) -> CGRect { toCocoa(r) }   // the inverse is the same formula
 }
 
-// MARK: - Lifecycle: เรียกครั้งเดียวตอนเปิดแอป
+// MARK: - Lifecycle: called once at app launch
 
 @MainActor
 enum Features {

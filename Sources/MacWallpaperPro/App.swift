@@ -39,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         runLanguageSwitchSelfTest()
     }
 
-    /// เปิดหน้าที่ต้องการตอนเริ่มเพื่อถ่ายภาพทดสอบ: `MWP_TEST_PAGE=discover`, `settings:clock`, `library:details`
+    /// Open a given page at launch for test screenshots: `MWP_TEST_PAGE=discover`, `settings:clock`, `library:details`
     private func applyTestPage() {
         guard let spec = ProcessInfo.processInfo.environment["MWP_TEST_PAGE"] else { return }
         let parts = spec.split(separator: ":").map(String.init)
@@ -51,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// ทดสอบสลับภาษาระหว่างรันด้วย `MWP_TEST_LANG_SWITCH=ja,ar,th` (ผู้ใช้ทั่วไปไม่มีผล)
+    /// Test switching languages while running with `MWP_TEST_LANG_SWITCH=ja,ar,th` (no effect for regular users)
     private func runLanguageSwitchSelfTest() {
         guard let codes = ProcessInfo.processInfo.environment["MWP_TEST_LANG_SWITCH"]?.split(separator: ",") else { return }
         for (i, code) in codes.enumerated() {
@@ -113,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                              backing: .buffered, defer: false)
             w.title = "MacWallpaperPro"
-            // กรอบหน้าต่างทำเองทั้งหมด: ซ่อน titlebar (คงปุ่มไฟจราจร) และไม่มี NSToolbar
+            // Fully custom window chrome: hide the titlebar (keep the traffic-light buttons) and no NSToolbar
             w.titleVisibility = .hidden
             w.titlebarAppearsTransparent = true
             w.titlebarSeparatorStyle = .none
@@ -126,7 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             w.contentViewController = host
             w.setContentSize(NSSize(width: 1200, height: 760))
             w.center()
-            // คืนขนาด/ตำแหน่งที่ผู้ใช้ตั้งไว้ (ต้องเรียกหลังใส่ contentViewController ไม่งั้นถูกย่อเป็นขนาดต่ำสุด)
+            // Restore the user's size/position (must run after setting contentViewController, otherwise it shrinks to the minimum size)
             w.setFrameAutosaveName("MacWallpaperProSettings")
             settingsWindow = w
         }

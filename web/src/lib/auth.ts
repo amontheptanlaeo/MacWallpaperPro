@@ -37,14 +37,30 @@ export function isAdminEmail(env: Env, email: string): boolean {
   return list.includes(email.toLowerCase());
 }
 
+/**
+ * ADMIN_EMAILS is the only source of admin rights: the stored `role` column is just a cache of it.
+ * Removing an address from ADMIN_EMAILS demotes that account on its very next request.
+ */
+export function roleFor(env: Env, email: string): Role {
+  return isAdminEmail(env, email) ? "admin" : "user";
+}
+
 export function rowToUser(env: Env, r: UserRow): User {
   return {
     id: r.id,
     email: r.email,
     displayName: r.display_name,
     avatarUrl: r.avatar_url,
-    role: r.role === "admin" || isAdminEmail(env, r.email) ? "admin" : "user",
+    role: roleFor(env, r.email),
   };
+}
+
+/** Keep the cached D1 role in step with ADMIN_EMAILS (one UPDATE, only when it changed). */
+async function syncRole(env: Env, r: UserRow): Promise<void> {
+  const role = roleFor(env, r.email);
+  if (r.role === role) return;
+  await env.DB.prepare("UPDATE users SET role = ? WHERE id = ?").bind(role, r.id).run();
+  r.role = role;
 }
 
 export function isSecure(request: Request): boolean {
@@ -66,6 +82,7 @@ export async function getAuth(request: Request, env: Env): Promise<AuthContext |
     .bind(hash, new Date().toISOString())
     .first<UserRow>();
   if (!row) return null;
+  await syncRole(env, row);
   return { user: rowToUser(env, row), sessionHash: hash };
 }
 
@@ -140,7 +157,7 @@ export async function upsertUser(env: Env, p: ProviderProfile): Promise<User> {
     if (!row) {
       const id = "u_" + randomId(16);
       const name = cleanName(p.name, email);
-      const role: Role = isAdminEmail(env, email) ? "admin" : "user";
+      const role = roleFor(env, email);
       await env.DB.prepare("INSERT INTO users (id, email, display_name, avatar_url, role) VALUES (?, ?, ?, ?, ?)")
         .bind(id, email, name, p.avatarUrl, role)
         .run();
@@ -150,10 +167,8 @@ export async function upsertUser(env: Env, p: ProviderProfile): Promise<User> {
       .bind(p.provider, p.providerUserId, row.id)
       .run();
   }
-  if (isAdminEmail(env, row.email) && row.role !== "admin") {
-    await env.DB.prepare("UPDATE users SET role = 'admin' WHERE id = ?").bind(row.id).run();
-    row.role = "admin";
-  }
+  // Promote or demote to match ADMIN_EMAILS on every sign-in.
+  await syncRole(env, row);
   if (p.avatarUrl && p.avatarUrl !== row.avatar_url) {
     await env.DB.prepare("UPDATE users SET avatar_url = ? WHERE id = ?").bind(p.avatarUrl, row.id).run();
     row.avatar_url = p.avatarUrl;

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/amontheptanlaeo/MacWallpaperPro/security/advisories/new
+    about: Please report security problems privately, never in a public issue.
+  - name: Privacy question or account deletion
+    url: https://macwallpaper.elizos.com/privacy
+    about: Signed-in creators can delete their account and uploads themselves from "My uploads". The privacy page explains how to reach us privately.

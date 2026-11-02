@@ -3,14 +3,14 @@ import ApplicationServices
 import Carbon.HIToolbox
 import Combine
 
-/// จัดหน้าต่างด้วยคีย์ลัด (แนวเดียวกับ Rectangle)
-/// คีย์ลัดใช้ Carbon RegisterEventHotKey จึงไม่ต้องขอสิทธิ์เพิ่ม แต่การย้าย/ปรับขนาดหน้าต่างต้องใช้ Accessibility
+/// Window snapping with keyboard shortcuts (in the spirit of Rectangle)
+/// Shortcuts use Carbon RegisterEventHotKey, which needs no extra permission, but moving/resizing windows needs Accessibility
 @MainActor
 final class WindowSnapper: ObservableObject {
     static let shared = WindowSnapper()
 
     @Published private(set) var isRunning = false
-    /// action ที่ลงทะเบียนคีย์ลัดไม่สำเร็จ (มักชนกับแอปอื่น)
+    /// Actions whose shortcut failed to register (usually taken by another app)
     @Published private(set) var failed: Set<SnapAction> = []
 
     private var handler: EventHandlerRef?
@@ -24,7 +24,7 @@ final class WindowSnapper: ObservableObject {
         reregister()
     }
 
-    /// ปิดคีย์ลัดชั่วคราวระหว่างบันทึกคีย์ลัดใหม่ในหน้าตั้งค่า
+    /// Temporarily disable shortcuts while a new one is being recorded in Settings
     func suspend(_ on: Bool) {
         suspended = on
         reregister()
@@ -67,7 +67,7 @@ final class WindowSnapper: ObservableObject {
         guard let app = NSWorkspace.shared.frontmostApplication else { return }
         let pid = app.processIdentifier
 
-        // หน้าต่างของแอปนี้เองจัดผ่าน NSWindow ได้เลย
+        // This app's own windows can be arranged through NSWindow directly
         if pid == ProcessInfo.processInfo.processIdentifier {
             guard let w = NSApp.keyWindow, w.styleMask.contains(.resizable) || action == .center || action == .nextDisplay,
                   let t = target(action, current: w.frame) else { NSSound.beep(); return }
@@ -80,19 +80,19 @@ final class WindowSnapper: ObservableObject {
               let ax = AXWin.frame(w),
               let t = target(action, current: AXWin.toCocoa(ax)) else { NSSound.beep(); return }
 
-        // AXEnhancedUserInterface (เปิดโดย VoiceOver/บางแอป) ทำให้การย้ายหน้าต่างช้าและเพี้ยน ปิดชั่วคราว
+        // AXEnhancedUserInterface (turned on by VoiceOver/some apps) makes window moves slow and glitchy, so turn it off temporarily
         let appEl = AXUIElementCreateApplication(pid)
         let enhanced: Bool = AXWin.attr(appEl, "AXEnhancedUserInterface") ?? false
         if enhanced { AXUIElementSetAttributeValue(appEl, "AXEnhancedUserInterface" as CFString, kCFBooleanFalse) }
         let r = AXWin.toAX(t)
-        // ตั้งขนาด → ตำแหน่ง → ขนาดอีกรอบ เผื่อขนาดถูกจำกัดตอนยังอยู่ขอบจอเดิม
+        // Set size -> position -> size again, in case the size was clamped while still at the old screen edge
         AXWin.setSize(w, r.size)
         AXWin.setPosition(w, r.origin)
         AXWin.setSize(w, r.size)
         if enhanced { AXUIElementSetAttributeValue(appEl, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue) }
     }
 
-    // MARK: Geometry (พิกัด Cocoa)
+    // MARK: Geometry (Cocoa coordinates)
 
     private static func screen(for r: CGRect) -> NSScreen? {
         NSScreen.screens.max { a, b in
@@ -101,7 +101,7 @@ final class WindowSnapper: ObservableObject {
         } ?? NSScreen.main
     }
 
-    /// พื้นที่ใช้งานของจอ: ไม่ทับแถบเมนู/Dock และแถบเมนูแบบกำหนดเองถ้าเปิดอยู่
+    /// Usable screen area: excludes the menu bar/Dock and the custom menu bar when it's on
     static func usableArea(_ s: NSScreen) -> CGRect {
         var v = s.visibleFrame
         v.size.height -= CustomMenuBar.shared.reservedTop(on: s)
@@ -132,7 +132,7 @@ final class WindowSnapper: ObservableObject {
             let screens = NSScreen.screens.sorted { $0.frame.minX < $1.frame.minX }
             guard screens.count > 1, let i = screens.firstIndex(of: s) else { return nil }
             let n = Self.usableArea(screens[(i + 1) % screens.count])
-            // คงสัดส่วนตำแหน่งและขนาดเทียบกับพื้นที่ของจอเดิม
+            // Keep position and size proportional to the old screen's area
             let w = min(cur.width / v.width * n.width, n.width)
             let h = min(cur.height / v.height * n.height, n.height)
             let x = n.minX + (cur.minX - v.minX) / v.width * n.width

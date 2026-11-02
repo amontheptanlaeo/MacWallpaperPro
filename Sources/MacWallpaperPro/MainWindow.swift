@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// MARK: - Navigation (3 ปลายทางหลักเท่านั้น)
+// MARK: - Navigation (only 3 main destinations)
 
 enum AppPage: String, CaseIterable, Identifiable {
     case library, discover, settings
@@ -24,7 +24,7 @@ enum AppPage: String, CaseIterable, Identifiable {
     }
 }
 
-/// หมวดย่อยภายในหน้า Settings
+/// Sections inside the Settings page
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general, clock, borders, snapping, menuBar, autoQuit, lockScreen, about
     var id: String { rawValue }
@@ -61,7 +61,7 @@ final class Navigator: ObservableObject {
     static let shared = Navigator()
     @Published var page: AppPage = .library
     @Published var settingsSection: SettingsSection = .general
-    /// ขอให้หน้าคลังเปิดแผงรายละเอียดของ wallpaper ที่กำลังใช้ (จากปุ่ม Customize บนหน้าอื่น)
+    /// Asks the Library page to open the details panel of the wallpaper in use (from the Customize button on other pages)
     @Published var showActiveDetails = false
 }
 
@@ -72,7 +72,7 @@ struct MainView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var loc: Localizer { Localizer.shared }
 
-    /// ทิศของกรอบหน้าต่างตามระบบ (ปุ่มไฟจราจรอยู่ซ้ายเสมอถ้าระบบเป็น LTR) ส่วนเนื้อหาใช้ทิศของภาษาแอป
+    /// Window chrome follows the system direction (traffic lights stay on the left in an LTR system); content follows the app language's direction
     private var shellDirection: LayoutDirection {
         NSApp.userInterfaceLayoutDirection == .rightToLeft ? .rightToLeft : .leftToRight
     }
@@ -105,7 +105,7 @@ struct MainView: View {
         .localized()
     }
 
-    /// แถบบนสุด (ความสูงเท่า titlebar): ลากหน้าต่างได้ มีปุ่มเลือกภาษาที่มุมขวาบน
+    /// Top strip (titlebar height): drags the window and has the language picker at the top-right
     private var titleBand: some View {
         HStack {
             Spacer()
@@ -126,7 +126,7 @@ private struct NavRail: View {
 
     var body: some View {
         VStack(spacing: Space.xs) {
-            // เว้นที่ให้ปุ่มไฟจราจรของหน้าต่าง
+            // Leave room for the window's traffic-light buttons
             Color.clear.frame(height: Metrics.titlebarHeight + Space.md)
             ForEach(AppPage.allCases) { p in item(p) }
             Spacer(minLength: 0)
@@ -195,12 +195,14 @@ private struct RailHoverStyle: ButtonStyle {
 
 // MARK: - Shared gallery tile
 
-/// การ์ด wallpaper 16:10 มุม 16: ภาพ + ชื่อด้านล่าง (ตัดบรรทัดได้) — ปุ่มเสริม (เช่น Get) วางที่มุมภาพ มองเห็นเสมอ
+/// 16:10 wallpaper card, 16 pt corners: image + title below (wraps); an extra button (such as Get) sits on the image corner and is always visible
 struct WallpaperTile<Thumb: View, Accessory: View>: View {
     let title: String
     let subtitle: String
     let selected: Bool
     let active: Bool
+    /// Show a "Video" badge on the image corner
+    var isVideo = false
     let action: () -> Void
     @ViewBuilder var thumbnail: Thumb
     @ViewBuilder var accessory: Accessory
@@ -223,6 +225,9 @@ struct WallpaperTile<Thumb: View, Accessory: View>: View {
                     .overlay(alignment: .topLeading) {
                         if active { InUseBadge().padding(Space.xs) }
                     }
+                    .overlay(alignment: .topTrailing) {
+                        if isVideo { VideoBadge().padding(Space.xs) }
+                    }
                     .shadow(color: .black.opacity(hovering ? 0.45 : 0.25), radius: hovering ? 14 : 6, y: hovering ? 6 : 2)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(TypeScale.bodySemibold).foregroundStyle(Theme.textPrimary)
@@ -238,7 +243,7 @@ struct WallpaperTile<Thumb: View, Accessory: View>: View {
         }
         .buttonStyle(TilePressStyle())
         .overlay(alignment: .topTrailing) {
-            // วางเหนือภาพ (ไม่อยู่ในปุ่มหลัก) จึงกดแยกได้ — ตำแหน่งอิงมุมภาพด้วย aspect ratio เดียวกัน
+            // Placed over the image (outside the main button) so it can be pressed separately; positioned from the image corner with the same aspect ratio
             Color.clear.aspectRatio(16 / 10, contentMode: .fit)
                 .overlay(alignment: .bottomTrailing) { accessory.padding(Space.xs) }
         }
@@ -247,6 +252,7 @@ struct WallpaperTile<Thumb: View, Accessory: View>: View {
         .animation(Motion.quick, value: selected)
         .onHover { hovering = $0 }
         .accessibilityLabel(active ? tr("%1$@, %2$@, in use", title, subtitle) : "\(title), \(subtitle)")
+        .accessibilityValue(isVideo ? tr("Video") : "")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
@@ -254,6 +260,21 @@ struct WallpaperTile<Thumb: View, Accessory: View>: View {
 private struct TilePressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.opacity(configuration.isPressed ? 0.85 : 1)
+    }
+}
+
+/// Badge marking a video wallpaper (used in Library and Discover)
+struct VideoBadge: View {
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "play.fill").font(.system(size: 8, weight: .bold))
+            Text(tr("Video")).font(TypeScale.badge)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, Space.xs).padding(.vertical, Space.xxs)
+        .background(.black.opacity(0.7), in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.12)))
+        .accessibilityHidden(true)
     }
 }
 
@@ -271,7 +292,7 @@ struct InUseBadge: View {
     }
 }
 
-/// พื้นหลังแทนภาพตัวอย่าง ระหว่างที่ยังไม่มีภาพจริง
+/// Placeholder background until the real preview image exists
 struct PlaceholderThumb: View {
     let symbol: String
     var colors: [Color] = [Theme.surfaceHover, Theme.surface]
@@ -285,7 +306,7 @@ struct PlaceholderThumb: View {
     }
 }
 
-/// โครงกระดูกระหว่างโหลด
+/// Loading skeleton
 struct SkeletonTile: View {
     @State private var on = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -307,7 +328,7 @@ struct SkeletonTile: View {
 
 // MARK: - Page scaffolding
 
-/// หัวหน้า: ชื่อหน้า + control ด้านท้าย — แคบเกินจะย้าย control ลงบรรทัดใหม่ (ไม่ทับกัน)
+/// Page header: title + trailing controls; when too narrow the controls wrap to a new line (no overlap)
 struct PageHeader<Trailing: View>: View {
     let title: String
     @ViewBuilder var trailing: Trailing
@@ -333,7 +354,7 @@ struct PageHeader<Trailing: View>: View {
     }
 }
 
-/// คอลัมน์รายละเอียดด้านขวา กว้าง 320 คงที่ — ดันตารางให้จัดใหม่ ไม่ทับการ์ด
+/// Fixed 320 pt details column on the right: the grid reflows instead of being covered
 struct DetailColumn<Content: View>: View {
     let title: String
     let close: () -> Void
@@ -368,14 +389,14 @@ struct DetailColumn<Content: View>: View {
     }
 }
 
-/// เปิด/ปิดคอลัมน์รายละเอียด: slide + fade (Reduce Motion = fade อย่างเดียว)
+/// Show/hide the details column: slide + fade (Reduce Motion = fade only)
 extension AnyTransition {
     @MainActor static func detailColumn(reduceMotion: Bool) -> AnyTransition {
         reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity)
     }
 }
 
-/// จัดเรียงชิปเป็นแถว แล้วขึ้นบรรทัดใหม่เมื่อเต็ม (ไม่มี scroll แนวนอน)
+/// Lays chips out in rows, wrapping when full (no horizontal scrolling)
 struct FlowLayout: Layout {
     var spacing: CGFloat = Space.xs
 
@@ -418,7 +439,7 @@ struct FlowLayout: Layout {
     }
 }
 
-/// ช่องว่างแบบการ์ด (ว่าง/ออฟไลน์/ไม่พบผลลัพธ์) พร้อมการกระทำเดียว
+/// Empty-state card (empty/offline/no results) with a single action
 struct StateCard<Actions: View>: View {
     let symbol: String
     let title: String

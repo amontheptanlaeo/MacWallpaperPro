@@ -27,7 +27,7 @@
     {
       "binding": "DB",
       "database_name": "macwallpaperpro",
-      // Placeholder for local dev. Replace with the real id after `wrangler d1 create macwallpaperpro`.
+      // The production database (D1 ids are not secret). A fork creates its own with `wrangler d1 create`.
       "database_id": "daf9591b-c3dc-4c44-95b9-b4edd6aba05c",
       "migrations_dir": "./migrations"
     }
@@ -52,6 +52,8 @@
     // OAuth client ids are public; the secrets are set with `wrangler secret put`.
     "GOOGLE_CLIENT_ID": "",
     "GITHUB_CLIENT_ID": "Ov23li3c8m9nJ6YHmljr"
+    // Secrets (never here): SIGNING_KEY_PKCS8, ADMIN_EMAILS, GOOGLE_CLIENT_SECRET, GITHUB_CLIENT_SECRET,
+    // DOWNLOAD_SALT (optional). Set them with `npx wrangler secret put <NAME>`.
   },
 
   "observability": { "enabled": true, "head_sampling_rate": 1 }

@@ -2,8 +2,8 @@ import AppKit
 import ApplicationServices
 import Combine
 
-/// ปิดแอปจริงเมื่อปิดหน้าต่างสุดท้าย (แทนที่พฤติกรรม macOS ที่แอปยังค้างอยู่)
-/// ใช้ Accessibility API: เฝ้าดู window ทุกตัวของทุกแอป เมื่อ window ถูกทำลายแล้วแอปไม่เหลือหน้าต่าง → terminate()
+/// Really quit an app when its last window closes (instead of the macOS default of staying open)
+/// Uses the Accessibility API: watches every window of every app; when a window is destroyed and the app has none left -> terminate()
 @MainActor
 final class TrueQuit: ObservableObject {
     static let shared = TrueQuit()
@@ -27,8 +27,8 @@ final class TrueQuit: ObservableObject {
         guard !isRunning else { return }
         isTrusted = AXIsProcessTrusted()
         guard isTrusted else {
-            // ไม่เด้งหน้าต่างขอสิทธิ์เองตอนเปิดแอป — ขอเฉพาะตอนผู้ใช้กดปุ่มในหน้าตั้งค่า
-            // รอจนผู้ใช้อนุญาตใน System Settings แล้วเริ่มเอง
+            // Don't pop up the permission prompt at launch; ask only when the user presses the button in Settings
+            // Wait until the user allows it in System Settings, then start automatically
             trustTimer?.invalidate()
             trustTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] t in
                 MainActor.assumeIsolated {
@@ -50,7 +50,7 @@ final class TrueQuit: ObservableObject {
             .compactMap { $0.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication }
             .receive(on: RunLoop.main)
             .sink { [weak self] app in
-                // รอให้แอปสร้าง window แรกก่อน
+                // Wait for the app to create its first window
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self?.attach(app) }
             }
             .store(in: &cancellables)
@@ -96,7 +96,7 @@ final class TrueQuit: ObservableObject {
         if notification == kAXWindowCreatedNotification {
             AXObserverAddNotification(observer, element, kAXUIElementDestroyedNotification as CFString, refcon)
         } else if notification == kAXUIElementDestroyedNotification {
-            // หน่วงเล็กน้อย: บางแอปปิดแล้วเปิดหน้าต่างใหม่ทันที (เช่น splash → main)
+            // Small delay: some apps close a window and open a new one right away (e.g. splash -> main)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.quitIfNoWindows(pid) }
         }
     }
@@ -112,7 +112,7 @@ final class TrueQuit: ObservableObject {
         app.terminate()
     }
 
-    /// nil = อ่านไม่ได้ (ไม่ควรปิดแอป), [] = ไม่มีหน้าต่างเลย
+    /// nil = couldn't read (don't quit the app), [] = no windows at all
     private static func windows(of app: AXUIElement) -> [AXUIElement]? {
         var value: CFTypeRef?
         switch AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) {

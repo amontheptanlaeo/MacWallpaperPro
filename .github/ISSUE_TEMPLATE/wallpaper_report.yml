@@ -1,0 +1,47 @@
+name: Report a Community wallpaper
+description: A wallpaper on the Community store is harmful, broken in a dangerous way, or infringes someone's rights.
+title: "[Wallpaper report] "
+labels: ["wallpaper-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Moderators review every report. If the wallpaper tries to attack users or the app (for example
+        to get around the network block), report it **privately** instead:
+        [private vulnerability reporting](https://github.com/amontheptanlaeo/MacWallpaperPro/security/advisories/new).
+        This form is public, so don't include personal data you don't want published.
+  - type: input
+    id: url
+    attributes:
+      label: Wallpaper link
+      description: The page on macwallpaper.elizos.com, for example https://macwallpaper.elizos.com/community/w/abc123
+    validations:
+      required: true
+  - type: dropdown
+    id: reason
+    attributes:
+      label: Reason
+      options:
+        - Copyright or license infringement (it's my work, or I represent the owner)
+        - Missing or wrong credit / license
+        - Offensive, sexual, violent or otherwise inappropriate content
+        - Misleading title or description
+        - Causes crashes, freezes or very high CPU/GPU use
+        - Tries to reach the network or behaves suspiciously
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What is wrong? For copyright reports, link to the original work and explain your relationship to it.
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: The information in this report is accurate to the best of my knowledge.
+          required: true

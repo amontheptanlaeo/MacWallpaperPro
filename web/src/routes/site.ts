@@ -13,6 +13,7 @@ import {
   type ProviderId,
 } from "../lib/oauth";
 import { LIMITS, rateLimit } from "../lib/ratelimit";
+import { background, githubCounts, parseDays, recordAppDownload, statsReport, trackPageView, utmFrom } from "../lib/stats";
 import { CATEGORIES, isCategory } from "../lib/validate";
 import { toDetail, toSummary, type WallpaperRow, type WallpaperSummary } from "../lib/wallpapers";
 import { errorPage, makeCtx, siteUrl } from "../views/layout";
@@ -32,7 +33,8 @@ function redirect(location: string, cookies: string[] = [], status = 302): Respo
 // ---------------------------------------------------------------------------
 // Pages
 // ---------------------------------------------------------------------------
-export async function landing(request: Request, env: Env): Promise<Response> {
+export async function landing(request: Request, env: Env, ec: ExecutionContext): Promise<Response> {
+  trackPageView(ec, env, request);
   const ctx = makeCtx(request, env);
   const [showcase, cute, tops, counts] = await Promise.all([
     queryWallpapers(env, new URLSearchParams({ sort: "popular", exclude: "cute", limit: "5" })),
@@ -57,21 +59,24 @@ export async function landing(request: Request, env: Env): Promise<Response> {
   return views.landingPage(ctx, { showcase: showcase.items, cute: cute.items, tops: topMap, counts: countMap });
 }
 
-export async function browse(request: Request, env: Env): Promise<Response> {
+export async function browse(request: Request, env: Env, ec: ExecutionContext): Promise<Response> {
+  trackPageView(ec, env, request);
   const ctx = makeCtx(request, env);
   const p = ctx.url.searchParams;
   const sort = p.get("sort") === "popular" ? "popular" : "new";
   const q = (p.get("q") || "").trim().slice(0, 100);
   const c = (p.get("category") || "").toLowerCase();
   const category = isCategory(c) ? c : "all";
+  const kind = p.get("kind") === "video" ? "video" : "all";
   const params = new URLSearchParams({ sort });
   if (q) params.set("q", q);
   if (category !== "all") params.set("category", category);
+  if (kind === "video") params.set("kind", "video");
   const { items, next } = await queryWallpapers(env, params);
-  return views.browsePage(ctx, { items, next, sort, q, category });
+  return views.browsePage(ctx, { items, next, sort, q, category, kind });
 }
 
-export async function detail(request: Request, env: Env, id: string): Promise<Response> {
+export async function detail(request: Request, env: Env, ec: ExecutionContext, id: string): Promise<Response> {
   const ctx = makeCtx(request, env);
   const row = await loadWallpaper(env, id);
   const notFound = () =>
@@ -81,6 +86,7 @@ export async function detail(request: Request, env: Env, id: string): Promise<Re
     const user = (await getAuth(request, env))?.user;
     if (!user || (user.id !== row.owner_id && user.role !== "admin")) return notFound();
   }
+  if (row.status === "approved") trackPageView(ec, env, request, row.id);
   const more = row.status === "approved" ? await queryWallpapers(env, new URLSearchParams({ sort: "popular", category: row.category, limit: "5" })) : { items: [] };
   return views.detailPage(ctx, toDetail(row), more.items.filter((m) => m.id !== row.id).slice(0, 4), row.reject_reason);
 }
@@ -103,6 +109,21 @@ export async function admin(request: Request, env: Env): Promise<Response> {
   const ctx = makeCtx(request, env);
   if (auth.user.role !== "admin") return views.forbiddenPage(ctx);
   return views.adminPage(ctx);
+}
+
+export async function adminStats(request: Request, env: Env): Promise<Response> {
+  const auth = await getAuth(request, env);
+  if (!auth) return redirect(`/signin?next=${encodeURIComponent("/community/admin/stats")}`);
+  const ctx = makeCtx(request, env);
+  if (auth.user.role !== "admin") return views.forbiddenPage(ctx);
+  let days = 30;
+  try {
+    days = parseDays(ctx.url.searchParams.get("days"));
+  } catch {
+    days = 30;
+  }
+  const [report, github] = await Promise.all([statsReport(env, days), githubCounts()]);
+  return views.statsPage(ctx, report, github);
 }
 
 export function signin(request: Request, env: Env): Response {
@@ -128,17 +149,25 @@ export function setLanguage(request: Request, code: string): Response {
   return redirect(next, [`${LANG_COOKIE}=${lang.code}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`], 303);
 }
 
-export async function downloadApp(request: Request, env: Env): Promise<Response> {
+export async function downloadApp(request: Request, env: Env, ec: ExecutionContext): Promise<Response> {
+  // Count (in the background, once per visitor per day) right before handing out the file.
+  const count = () => {
+    if (request.method === "GET") background(ec, recordAppDownload(env, request, utmFrom(request)));
+  };
   // 1) GitHub Releases: the file exists when GitHub answers with a redirect to the asset.
   try {
     const head = await fetch(GITHUB_RELEASE_URL, { method: "HEAD", redirect: "manual" });
-    if (head.status >= 300 && head.status < 400) return redirect(GITHUB_RELEASE_URL, [], 302);
+    if (head.status >= 300 && head.status < 400) {
+      count();
+      return redirect(GITHUB_RELEASE_URL, [], 302);
+    }
   } catch {
     // GitHub unreachable: try R2 next.
   }
   // 2) Fallback: R2.
   const obj = await env.BUCKET.get(RELEASE_KEY);
   if (obj) {
+    count();
     return new Response(obj.body, {
       headers: {
         "Content-Type": "application/zip",

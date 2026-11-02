@@ -9,6 +9,7 @@ export const LIMITS = {
   oauth: { limit: 30, windowSec: 15 * 60 },
   devLogin: { limit: 30, windowSec: 15 * 60 },
   upload: { limit: 10, windowSec: 60 * 60 },
+  videoPut: { limit: 20, windowSec: 60 * 60 },
 } satisfies Record<string, Limit>;
 
 /**

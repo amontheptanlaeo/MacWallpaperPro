@@ -5,14 +5,14 @@ import IOKit.ps
 import Network
 import SwiftUI
 
-/// แถบเมนูแบบกำหนดเอง (แนวเดียวกับ SketchyBar) หนึ่งหน้าต่างต่อหนึ่งจอ คลิกทะลุได้
-/// ถ้าแถบเมนูของระบบยังแสดงอยู่ จะวางไว้ใต้แถบเมนูของระบบเสมอ ไม่ทับกัน
+/// Custom menu bar (in the spirit of SketchyBar): one click-through window per display
+/// If the system menu bar is still visible, it always sits below it and never overlaps
 @MainActor
 final class CustomMenuBar: ObservableObject {
     static let shared = CustomMenuBar()
 
     @Published private(set) var isRunning = false
-    /// แถบเมนูของระบบแสดงอยู่บนจอหลัก (ไม่ได้ตั้งให้ซ่อนอัตโนมัติ)
+    /// The system menu bar is visible on the main display (not set to hide automatically)
     @Published private(set) var systemBarVisible = true
 
     private var windows: [NSWindow] = []
@@ -31,7 +31,7 @@ final class CustomMenuBar: ObservableObject {
             .publisher(for: Self.hidingChanged)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                // visibleFrame ของจออัปเดตช้ากว่า notification เล็กน้อย
+                // The screen's visibleFrame updates slightly after the notification
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.layout() }
             }
             .store(in: &cancellables)
@@ -56,14 +56,14 @@ final class CustomMenuBar: ObservableObject {
         systemBarVisible = NSScreen.screens.first.map(Self.hasSystemBar) ?? true
     }
 
-    /// จอนี้มีแถบเมนูของระบบกินพื้นที่อยู่หรือไม่ (ถ้าตั้งให้ซ่อนอัตโนมัติ visibleFrame จะสูงเท่าจอ)
+    /// Whether the system menu bar takes space on this display (when auto-hidden, visibleFrame is as tall as the screen)
     static func hasSystemBar(_ s: NSScreen) -> Bool { s.frame.maxY - s.visibleFrame.maxY > 0.5 }
 
     private func shows(on s: NSScreen) -> Bool {
         FeatureStore.shared.config.barAllScreens || s == NSScreen.screens.first
     }
 
-    /// ความสูงที่แถบนี้ใช้บนจอนั้น (ให้การจัดหน้าต่างเว้นที่ไว้)
+    /// Height this bar uses on that display (window snapping leaves room for it)
     func reservedTop(on s: NSScreen) -> CGFloat {
         guard isRunning, shows(on: s) else { return 0 }
         let c = FeatureStore.shared.config
@@ -97,7 +97,7 @@ final class CustomMenuBar: ObservableObject {
         w.ignoresMouseEvents = true
         w.isReleasedWhenClosed = false
         w.animationBehavior = .none
-        // ต่ำกว่าแถบเมนูของระบบหนึ่งระดับ เมื่อแถบของระบบเลื่อนลงมาจะทับแถบนี้ ไม่ใช่ถูกบัง
+        // One level below the system menu bar, so when the system bar slides down it covers this bar instead of being hidden by it
         w.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue - 1)
         w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         let host = NSHostingView(rootView: CustomBarView())
@@ -106,7 +106,7 @@ final class CustomMenuBar: ObservableObject {
         return w
     }
 
-    // MARK: ตั้งค่า "ซ่อนแถบเมนูอัตโนมัติ" ของ macOS
+    // MARK: macOS "Automatically hide the menu bar" setting
 
     private static let hidingChanged = Notification.Name("AppleInterfaceMenuBarHidingChangedNotification")
     private static let hideKey = "_HIHideMenuBar" as CFString
@@ -115,8 +115,8 @@ final class CustomMenuBar: ObservableObject {
         CFPreferencesCopyValue(hideKey, kCFPreferencesAnyApplication, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) as? Bool ?? false
     }
 
-    /// เทียบเท่า `defaults write NSGlobalDomain _HIHideMenuBar -bool …` แล้วแจ้งระบบด้วย distributed notification
-    /// ตัวเดียวกับที่ System Settings ส่ง แถบเมนูจะเปลี่ยนทันทีโดยไม่ต้องรีสตาร์ต SystemUIServer
+    /// Same as `defaults write NSGlobalDomain _HIHideMenuBar -bool …`, then tells the system with a distributed notification
+    /// (the same one System Settings posts), so the menu bar changes at once without restarting SystemUIServer
     static func setSystemAutoHide(_ on: Bool) {
         CFPreferencesSetValue(hideKey, on ? kCFBooleanTrue : kCFBooleanFalse,
                               kCFPreferencesAnyApplication, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
@@ -126,14 +126,14 @@ final class CustomMenuBar: ObservableObject {
     }
 
     static func openSystemMenuBarSettings() {
-        // macOS 15+: การตั้งค่าระบบ › แถบเมนู (เดิมอยู่ใน ศูนย์ควบคุม)
+        // macOS 15+: System Settings › Menu Bar (formerly under Control Center)
         let urls = ["x-apple.systempreferences:com.apple.ControlCenter-Settings.extension",
                     "x-apple.systempreferences:com.apple.preference.dock"]
         for u in urls { if let url = URL(string: u), NSWorkspace.shared.open(url) { return } }
     }
 }
 
-// MARK: - Stats (อัปเดตทุก 2 วินาที เฉพาะตอนแถบเปิดอยู่)
+// MARK: - Stats (updated every 2 seconds, only while the bar is on)
 
 @MainActor
 final class BarStats: ObservableObject {
@@ -203,7 +203,7 @@ final class BarStats: ObservableObject {
         cpu = readCPU() ?? cpu
         memory = readMemory() ?? memory
         readNetworkRates()
-        if tick % 15 == 0 { battery = readBattery() }   // ทุก 30 วินาที
+        if tick % 15 == 0 { battery = readBattery() }   // every 30 seconds
         tick += 1
     }
 
@@ -224,7 +224,7 @@ final class BarStats: ObservableObject {
         return Double(busy - last.busy) / Double(total - last.total)
     }
 
-    /// คิดแบบเดียวกับ "หน่วยความจำที่ใช้" ใน Activity Monitor (แอป + wired + compressed)
+    /// Computed like "Memory Used" in Activity Monitor (app + wired + compressed)
     private func readMemory() -> Double? {
         var vm = vm_statistics64()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)

@@ -43,6 +43,12 @@ struct LibraryEntry: Identifiable, Equatable {
         return false
     }
 
+    /// Community video (no color/speed adjustments)
+    var isVideo: Bool {
+        if case .installed(let w) = kind { return w.isVideo }
+        return false
+    }
+
     func isActive(_ c: Config) -> Bool {
         guard c.wallpaperMode != .off else { return false }
         switch kind {
@@ -83,7 +89,7 @@ extension LibraryEntry {
         StyleOption.all.map { LibraryEntry(kind: .builtin($0)) } + Community.shared.installed.map { LibraryEntry(kind: .installed($0)) }
     }
 
-    /// wallpaper ที่กำลังใช้ (หรือที่ใช้ล่าสุดตอนปิดอยู่)
+    /// The wallpaper in use (or the last one used, while off)
     @MainActor static func current(_ c: Config) -> LibraryEntry? {
         all.first { e in
             switch e.kind {
@@ -153,7 +159,7 @@ struct LibraryView: View {
         }
         .background { ThumbnailWarmer(entries: allEntries.filter { !$0.isCustom && !$0.isInstalled }) }
         .task(id: Shaders.params(store.config)) {
-            // เปลี่ยนสีแล้วหยุดปรับ 1 วินาที → สร้างภาพตัวอย่างใหม่ตามสีปัจจุบัน
+            // After a color change settles for 1 second -> render a new preview with the current colors
             try? await Task.sleep(for: .seconds(1))
             if !Task.isCancelled { Thumbnails.shared.sync(signature: Shaders.params(store.config)) }
         }
@@ -229,6 +235,7 @@ struct LibraryView: View {
                 WallpaperTile(title: e.title, subtitle: e.subtitle,
                               selected: showDetails && selection == e.id,
                               active: e.isActive(store.config),
+                              isVideo: e.isVideo,
                               action: { tap(e) }) {
                     EntryThumbnail(entry: e)
                 } accessory: {
@@ -239,7 +246,7 @@ struct LibraryView: View {
         }
     }
 
-    /// คลิกเดียวใช้ทันที (ยกเว้นแบบสร้างเองที่ยังไม่ได้ตั้งไฟล์) แล้วเปิดรายละเอียด
+    /// One click applies it right away (except custom ones with no file set yet), then opens the details
     private func tap(_ e: LibraryEntry) {
         if e.canApplyDirectly(store.config) { withMotion(Motion.quick) { e.apply() } }
         openDetails(e)
@@ -270,12 +277,12 @@ struct LibraryView: View {
         Button(tr("Set as wallpaper")) { e.apply() }
         if case .installed(let w) = e.kind {
             Button(tr("View in Community")) { NSWorkspace.shared.open(community.webPage(for: w.id)) }
-            Button(tr("Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([w.indexURL]) }
+            Button(tr("Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([w.fileURL]) }
         }
     }
 }
 
-/// ภาพตัวอย่างของรายการในคลัง
+/// Preview image of a Library item
 struct EntryThumbnail: View {
     let entry: LibraryEntry
     @EnvironmentObject var store: Store
@@ -303,7 +310,7 @@ struct EntryThumbnail: View {
 
 // MARK: - Now playing
 
-/// แถบ "กำลังเล่น": ภาพย่อ ชื่อ และหยุด/เล่นต่อ — ใช้บนหน้าคลังและหน้า Discover
+/// "Now playing" bar: thumbnail, title and pause/resume; used on the Library and Discover pages
 struct NowPlayingStrip: View {
     let onCustomize: () -> Void
     @EnvironmentObject var store: Store
@@ -415,17 +422,26 @@ struct LibraryDetails: View {
                 }
                 .buttonStyle(SecondaryButtonStyle(fullWidth: true))
             }
-        } else if entry.isInstalled {
-            // wallpaper จาก Community ใช้สีของผู้สร้างเอง ปรับได้แค่ความเร็ว
+        } else if entry.isInstalled && !entry.isVideo {
+            // Community wallpapers keep their creator's colors; only the speed can change (videos allow neither)
             DetailGroup(title: tr("Customize")) { speedControl }
         }
 
         if case .installed(let w) = entry.kind {
-            DetailGroup(title: tr("Info")) {
+            DetailGroup(title: tr("Info"), footer: w.isVideo ? tr("Plays muted and looped.") : nil) {
+                if w.isVideo {
+                    infoRow(tr("Type"), tr("Video"))
+                    if let credit = w.info?.credit, !credit.isEmpty { infoRow(tr("Credit"), credit) }
+                    if let license = w.info?.license, !license.isEmpty { infoRow(tr("License"), license) }
+                }
                 infoRow(tr("Creator"), w.manifest.author)
                 infoRow(tr("Version"), String(w.manifest.version))
                 infoRow(tr("Size"), ByteCountFormatter.string(fromByteCount: Int64(w.manifest.sizeBytes), countStyle: .file))
                 StatusRow(kind: .ok, title: tr("Security"), subtitle: tr("Signature verified · Offline"))
+                if w.isVideo, let s = w.info?.sourceUrl, let u = URL(string: s), ["https", "http"].contains(u.scheme ?? "") {
+                    Button(tr("View source")) { NSWorkspace.shared.open(u) }
+                        .buttonStyle(SecondaryButtonStyle(fullWidth: true))
+                }
             }
             Button(role: .destructive) { confirmDelete = true } label: {
                 Label(tr("Remove from Mac…"), systemImage: "trash")
@@ -502,11 +518,15 @@ struct LibraryDetails: View {
                 PlaceholderThumb(symbol: "photo")
             }
         case .installed(let w):
-            WebWallpaper(source: .localHTML(w.indexURL), params: Shaders.speedOnly(c), isDesktop: false).id(entry.id)
+            if w.isVideo {
+                VideoWallpaper(url: w.videoURL).id(entry.id)
+            } else {
+                WebWallpaper(source: .localHTML(w.indexURL), params: Shaders.speedOnly(c), isDesktop: false).id(entry.id)
+            }
         }
     }
 
-    /// อัปเดตภาพตัวอย่างในตารางจากตัวอย่างสด (ใช้สีปัจจุบัน)
+    /// Update the grid preview from the live preview (current colors)
     private func snapshot(_ wv: WKWebView) {
         Thumbnails.shared.capture(entry.id, from: wv)
     }
@@ -548,7 +568,7 @@ struct LibraryDetails: View {
         }
     }
 
-    /// สีใช้ได้เฉพาะสไตล์ที่มากับแอป (Nebula/preset)
+    /// Colors apply only to the built-in styles (Nebula/presets)
     private var usesColors: Bool {
         if case .builtin(let o) = entry.kind { return o.usesColors }
         return false
@@ -562,7 +582,7 @@ struct LibraryDetails: View {
     }
 }
 
-/// กลุ่มในคอลัมน์รายละเอียด: หัวข้อเล็ก + การ์ดแถว
+/// Group in the details column: small heading + card of rows
 struct DetailGroup<Content: View>: View {
     let title: String
     var footer: String? = nil
@@ -585,7 +605,7 @@ struct DetailGroup<Content: View>: View {
 
 // MARK: - Thumbnails
 
-/// ภาพตัวอย่างของสไตล์ที่มากับแอป: เก็บจากตัวอย่างสดในแผงรายละเอียด แล้วแคชไว้ในเครื่อง
+/// Previews of the built-in styles: captured from the live preview in the details panel and cached locally
 @MainActor
 final class Thumbnails: ObservableObject {
     static let shared = Thumbnails()
@@ -600,7 +620,7 @@ final class Thumbnails: ObservableObject {
         cacheDir.appendingPathComponent(id.replacingOccurrences(of: ":", with: "_") + ".png")
     }
 
-    /// ล้างภาพตัวอย่างเมื่อสี/ความเร็วต่างจากตอนที่สร้างภาพไว้
+    /// Drop the preview when colors/speed differ from when it was captured
     func sync(signature: String) {
         let key = "MacWallpaperPro.thumbSignature"
         guard UserDefaults.standard.string(forKey: key) != signature else { return }
@@ -637,7 +657,7 @@ final class Thumbnails: ObservableObject {
     }
 }
 
-/// เรนเดอร์ภาพตัวอย่างของสไตล์ที่ยังไม่มีภาพทีละอัน แบบมองไม่เห็นอยู่หลังหน้าคลัง
+/// Renders missing style previews one at a time, invisibly behind the Library page
 struct ThumbnailWarmer: View {
     let entries: [LibraryEntry]
     @EnvironmentObject var store: Store

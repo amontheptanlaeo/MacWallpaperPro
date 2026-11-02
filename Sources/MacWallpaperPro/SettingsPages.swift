@@ -20,7 +20,7 @@ struct StyleOption: Identifiable, Equatable {
     let mode: WallpaperMode
     var preset: WallpaperPreset? = nil
 
-    /// computed เพื่อให้ข้อความเปลี่ยนตามภาษาทันที
+    /// computed so the text follows the language immediately
     static var all: [StyleOption] { [
         StyleOption(id: "nebula", name: "Nebula", detail: tr("Responds to your pointer"), symbol: "cursorarrow.motionlines", mode: .interactive),
         StyleOption(id: "aurora", name: "Aurora", detail: tr("Northern lights"), symbol: "sparkles", mode: .preset, preset: .aurora),
@@ -41,7 +41,7 @@ struct StyleOption: Identifiable, Equatable {
 }
 
 
-// MARK: - Settings (หน้าเดียว แบ่งหมวดด้วยรายการด้านซ้าย)
+// MARK: - Settings (one page, sections listed on the left)
 
 struct SettingsView: View {
     @ObservedObject private var nav = Navigator.shared
@@ -337,6 +337,11 @@ struct LockScreenPage: View {
 
 // MARK: - About
 
+enum SupportLinks {
+    static let githubSponsors = URL(string: "https://github.com/sponsors/amontheptanlaeo")!
+    static let kofi = URL(string: "https://ko-fi.com/amontheptanlaeo")!
+}
+
 struct AboutPage: View {
     private enum Level { case full, partial, none }
     private var items: [(Level, String, String)] { [
@@ -377,6 +382,23 @@ struct AboutPage: View {
                     .font(TypeScale.secondaryMedium)
                     .foregroundStyle(Theme.accentEnd)
             }
+        }
+
+        // Optional support links. Shown only here, never as a popup or prompt.
+        SettingsGroup(title: tr("Support MacWallpaperPro"),
+                      footer: tr("MacWallpaperPro is free and always will be. If you enjoy it, you can support its development.")) {
+            FlowLayout(spacing: Space.sm) {
+                Button { NSWorkspace.shared.open(SupportLinks.githubSponsors) } label: {
+                    Label(tr("Sponsor on GitHub"), systemImage: "heart.fill")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                Button { NSWorkspace.shared.open(SupportLinks.kofi) } label: {
+                    Label(tr("Buy me a coffee on Ko-fi"), systemImage: "cup.and.saucer.fill")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Space.md)
         }
 
         SettingsGroup(title: tr("What it can do")) {

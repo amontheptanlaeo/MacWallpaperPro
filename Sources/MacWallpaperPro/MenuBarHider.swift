@@ -1,16 +1,16 @@
 import AppKit
 import Combine
 
-/// ซ่อนไอคอนบนแถบเมนู (แนวเดียวกับ Hidden Bar / Ice)
-/// ใช้ status item สองตัว: ปุ่มลูกศรสำหรับสลับ และเส้นคั่นที่ยืดยาว 10,000 pt เพื่อดันไอคอนทางซ้ายของมันออกนอกจอ
-/// ผู้ใช้เลือกไอคอนที่จะซ่อนเองโดยกด ⌘ ค้างแล้วลากไอคอนไปไว้ทางซ้ายของเส้นคั่น
+/// Hide menu bar icons (in the spirit of Hidden Bar / Ice)
+/// Uses two status items: an arrow button to toggle, and a separator that stretches to 10,000 pt to push the icons on its left off screen
+/// Users choose which icons to hide by ⌘-dragging them to the left of the separator
 @MainActor
 final class MenuBarHider: NSObject, ObservableObject {
     static let shared = MenuBarHider()
 
     @Published private(set) var isRunning = false
     @Published private(set) var isHidden = false
-    /// เส้นคั่นอยู่ทางขวาของปุ่มลูกศร (ผู้ใช้ลากสลับตำแหน่ง) ถ้ายืดออกจะซ่อนปุ่มลูกศรไปด้วย จึงไม่ยอมซ่อน
+    /// The separator is to the right of the arrow (the user swapped them); stretching it would hide the arrow too, so don't hide
     @Published private(set) var misordered = false
 
     private var toggle: NSStatusItem?
@@ -25,7 +25,7 @@ final class MenuBarHider: NSObject, ObservableObject {
     func start() {
         guard !isRunning else { return }
         isRunning = true
-        // สร้างปุ่มลูกศรก่อน ระบบจะวางตัวที่สร้างทีหลัง (เส้นคั่น) ไว้ทางซ้าย
+        // Create the arrow first: the system places the one created later (the separator) to its left
         let t = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         t.autosaveName = "MacWallpaperPro.hiderToggle"
         t.behavior = []
@@ -45,7 +45,7 @@ final class MenuBarHider: NSObject, ObservableObject {
         }
         toggle = t
         separator = s
-        // เปิดครั้งแรกให้เห็นเส้นคั่นก่อน จะได้จัดไอคอนได้
+        // On first launch show the separator so the icons can be arranged
         setHidden(false)
     }
 
@@ -70,7 +70,7 @@ final class MenuBarHider: NSObject, ObservableObject {
         guard let t = toggle, let s = separator else { return }
         rehideTimer?.invalidate(); rehideTimer = nil
         if hide {
-            // เช็กลำดับ: เส้นคั่นต้องอยู่ทางซ้ายของปุ่มลูกศร
+            // Check the order: the separator must be to the left of the arrow
             if let tx = t.button?.window?.frame.minX, let sx = s.button?.window?.frame.minX, sx > tx {
                 misordered = true
                 return
@@ -91,7 +91,7 @@ final class MenuBarHider: NSObject, ObservableObject {
         isHidden = hide
         t.button?.image = NSImage(systemSymbolName: hide ? "chevron.left" : "chevron.right",
                                   accessibilityDescription: hide ? tr("Show hidden icons") : tr("Hide icons"))
-        // ตั้ง tooltip ใหม่ทุกครั้ง เพื่อให้ตรงกับภาษาปัจจุบัน
+        // Set the tooltip every time so it matches the current language
         t.button?.toolTip = tr("Show or hide menu bar icons")
         s.button?.toolTip = tr("Icons to the left of this line are hidden. Hold ⌘ and drag to rearrange.")
     }
@@ -108,7 +108,7 @@ final class MenuBarHider: NSObject, ObservableObject {
         m.addItem(settings)
         t.menu = m
         t.button?.performClick(nil)
-        t.menu = nil   // คืนค่าให้คลิกซ้ายสลับได้ตามเดิม
+        t.menu = nil   // restore left-click toggling
     }
 
     @objc private func toggleFromMenu() { setHidden(!isHidden) }

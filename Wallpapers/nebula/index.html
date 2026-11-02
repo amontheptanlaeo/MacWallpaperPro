@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Nebula Flow</title>
 <!--
-  Nebula Flow — wallpaper เริ่มต้นของ MacWallpaperPro
-  - พื้นหลัง: nebula แบบ domain-warp (WebGL) + เลนส์ความโน้มถ่วงรอบเคอร์เซอร์ + คลื่นเมื่อคลิก
-  - อนุภาค: ไหลตาม flow field, หมุนวนรอบเคอร์เซอร์, ระเบิดออกเมื่อคลิก
-  - เคอร์เซอร์: วงแหวนเรืองแสง + เส้น constellation เชื่อมดาวใกล้ๆ
-  - ไม่ขยับเมาส์ 4 วินาที → โหมด autopilot ลอยเอง
-  เปิดในเบราว์เซอร์ได้ตรงๆ เพื่อแก้ไข/ทดลอง · MacWallpaperPro ส่งสีผ่าน window.setP({c1,c2,c3,speed})
+  Nebula Flow: the default MacWallpaperPro wallpaper
+  - Background: domain-warped nebula (WebGL) + a gravity lens around the cursor + ripples on click
+  - Particles: follow a flow field, swirl around the cursor, burst outward on click
+  - Cursor: a glowing ring + constellation lines linking nearby stars
+  - No mouse movement for 4 seconds -> autopilot mode drifts on its own
+  Open it directly in a browser to edit or experiment. MacWallpaperPro sends colors through window.setP({c1,c2,c3,speed})
 -->
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #05030c; }
@@ -25,7 +25,7 @@
 (() => {
 'use strict';
 
-// ---------- Params (MyStyle เขียนทับผ่าน setP) ----------
+// ---------- Params (MyStyle overrides them through setP) ----------
 const P = { c1: [0.20, 0.95, 0.80], c2: [0.62, 0.30, 1.00], c3: [0.02, 0.01, 0.06], speed: 1 };
 window.setP = o => { Object.assign(P, o); };
 const rgb = (c, a = 1, k = 1) =>
@@ -118,7 +118,7 @@ function resize() {
 function spawn(i, anywhere) {
   px[i] = Math.random() * W; py[i] = Math.random() * H;
   vx[i] = vy[i] = 0; life[i] = 120 + Math.random() * 380;
-  if (!anywhere && Math.random() < 0.3) { // เกิดใกล้เคอร์เซอร์บ้าง ให้รอบๆ ดูหนาแน่น
+  if (!anywhere && Math.random() < 0.3) { // sometimes spawn near the cursor so the area around it looks dense
     const a = Math.random() * 6.283, r = 60 + Math.random() * 220;
     px[i] = M.x + Math.cos(a) * r; py[i] = M.y + Math.sin(a) * r;
   }
@@ -152,7 +152,7 @@ function frame(ms) {
   now = ms / 1000; T += dt * P.speed;
   const sp = P.speed;
 
-  // autopilot เมื่อไม่ขยับเมาส์
+  // autopilot while the mouse is idle
   const idle = clamp((now - M.last - 4) / 2, 0, 1);
   const ax = W / 2 + Math.sin(T * 0.23) * W * 0.32 + Math.sin(T * 0.61) * W * 0.06;
   const ay = H / 2 + Math.sin(T * 0.37 + 1) * H * 0.26;
@@ -168,7 +168,7 @@ function frame(ms) {
   gl.uniform4fv(U.RP, ripples.flat());
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-  // particles: จางหางเดิม แล้ววาดเส้นใหม่แบบ additive
+  // particles: fade the old trails, then draw new strokes additively
   fctx.globalCompositeOperation = 'destination-out';
   fctx.fillStyle = 'rgba(0,0,0,0.11)'; fctx.fillRect(0, 0, W, H);
   fctx.globalCompositeOperation = 'lighter';

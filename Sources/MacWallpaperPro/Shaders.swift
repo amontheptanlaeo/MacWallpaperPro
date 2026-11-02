@@ -1,6 +1,6 @@
 import Foundation
 
-/// Wallpaper แบบ GPU: หน้า HTML ที่รัน fragment shader (WebGL) เต็มจอ
+/// GPU wallpaper: an HTML page that runs a full-screen fragment shader (WebGL)
 enum Shaders {
     static func html(fragment: String, scale: Double) -> String {
         template
@@ -13,7 +13,7 @@ enum Shaders {
                c.color1.js, c.color2.js, c.color3.js, c.speed)
     }
 
-    /// wallpaper จาก Community: ส่งเฉพาะความเร็ว — สีให้เป็นไปตามที่ผู้สร้างออกแบบไว้
+    /// Community wallpaper: only the speed is sent; colors stay as the creator designed them
     static func speedOnly(_ c: Config) -> String {
         String(format: "{\"speed\":%.3f}", c.speed)
     }

@@ -11,15 +11,39 @@ export class HttpError extends Error {
   }
 }
 
+/**
+ * HTTPS only, for a year, on the exact host that answered (browsers ignore it over plain HTTP).
+ * Deliberately no includeSubDomains: this Worker also answers for the root elizos.com, and other
+ * *.elizos.com services are not ours to force onto HSTS.
+ */
+export const HSTS = "max-age=31536000";
+
 export const SECURITY_HEADERS: Record<string, string> = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Strict-Transport-Security": HSTS,
 };
+
+/**
+ * Make sure every Worker response carries HSTS, including ones built elsewhere (Response.redirect,
+ * plain-text routes, asset fallbacks), whose headers may be immutable.
+ */
+export function withHsts(res: Response): Response {
+  if (res.headers.has("Strict-Transport-Security")) return res;
+  try {
+    res.headers.set("Strict-Transport-Security", HSTS);
+    return res;
+  } catch {
+    const copy = new Response(res.body, res);
+    copy.headers.set("Strict-Transport-Security", HSTS);
+    return copy;
+  }
+}
 
 /** CSP for HTML pages on the main origin. Strict: no inline script, no third-party anything. */
 export const SITE_CSP =
   "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: https://lh3.googleusercontent.com https://avatars.githubusercontent.com; " +
-  "media-src 'self'; frame-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; " +
+  "media-src 'self' blob:; frame-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; " +
   "object-src 'none'; frame-ancestors 'none'";
 
 /** Google AdSense hosts. Allowed ONLY on pages that actually render an ad slot. */
@@ -38,7 +62,7 @@ export const ADS_CSP = (() => {
   const h = AD_HOSTS.join(" ");
   return (
     `default-src 'self'; script-src 'self' ${h}; style-src 'self' 'unsafe-inline'; font-src 'self'; ` +
-    `img-src 'self' data: blob: https:; media-src 'self'; frame-src 'self' ${h}; fenced-frame-src ${h}; ` +
+    `img-src 'self' data: blob: https:; media-src 'self' blob:; frame-src 'self' ${h}; fenced-frame-src ${h}; ` +
     `connect-src 'self' ${h}; form-action 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'`
   );
 })();

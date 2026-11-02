@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SITE_CSP } from "../src/lib/http";
-import { PREVIEW_CSP } from "../src/routes/public";
+import { PREVIEW_RESPONSE_CSP } from "../src/routes/public";
 import { callWith, insertWallpaper, signedInUser } from "./helpers";
 
 const ADS = {
@@ -61,7 +61,7 @@ describe("AdSense", () => {
     const wp = await insertWallpaper({ ownerId: owner.id });
     for (const path of [`/preview/${wp.id}`, "/preview-sandbox"]) {
       const csp = (await callWith(ADS, path)).headers.get("Content-Security-Policy")!;
-      expect(csp).toBe(PREVIEW_CSP);
+      expect(csp).toBe(PREVIEW_RESPONSE_CSP);
       expect(csp).not.toMatch(AD_HOST);
     }
   });

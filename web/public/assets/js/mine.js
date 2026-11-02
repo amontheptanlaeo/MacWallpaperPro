@@ -1,5 +1,5 @@
 // My uploads: review status of everything the creator has shared.
-import { api, esc, t } from "./site.js";
+import { api, esc, t, toast } from "./site.js";
 
 const list = document.querySelector("[data-mine]");
 const fmtDate = (iso) => {
@@ -38,3 +38,26 @@ async function load() {
   }
 }
 if (list) load();
+
+// Delete my account: a confirmation dialog, then DELETE /api/me with an explicit confirm field.
+const delModal = document.querySelector("[data-delete-modal]");
+document.querySelector("[data-delete-open]")?.addEventListener("click", () => delModal?.showModal());
+delModal?.addEventListener("click", (e) => {
+  if (e.target === delModal || e.target.closest("[data-close]")) delModal.close();
+});
+delModal?.querySelector("[data-delete-confirm]")?.addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  const err = delModal.querySelector("[data-delete-error]");
+  btn.disabled = true;
+  err.hidden = true;
+  try {
+    await api("/api/me", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: "DELETE" }) });
+    delModal.close();
+    toast(t("mine.deleted"));
+    setTimeout(() => location.assign("/"), 1200);
+  } catch (ex) {
+    err.textContent = ex.message;
+    err.hidden = false;
+    btn.disabled = false;
+  }
+});

@@ -1,10 +1,10 @@
 #!/bin/bash
 # Build MacWallpaperPro.app (release)
-#   SIGN_IDENTITY  ใบรับรองสำหรับเซ็น (ค่าเริ่มต้น "-" = ad-hoc ใช้ในเครื่องเท่านั้น)
-#   VERSION / BUILD_NUMBER  เลขเวอร์ชันใน Info.plist
+#   SIGN_IDENTITY  signing certificate (default: the first "Developer ID Application" found, else "-" = ad-hoc, this Mac only)
+#   VERSION / BUILD_NUMBER  version numbers written to Info.plist
 set -euo pipefail
-# เซ็นด้วยใบรับรองเดิมเสมอ เพื่อให้สิทธิ์ Accessibility ไม่หายทุกครั้งที่ build ใหม่
-# (ad-hoc "-" ได้ตัวตนใหม่ทุกรอบ → macOS ถามสิทธิ์ซ้ำ)
+# Always sign with the same certificate so the Accessibility permission survives rebuilds
+# (ad-hoc "-" gets a new identity every build, so macOS asks for the permission again).
 DEFAULT_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')"
 SIGN_IDENTITY="${SIGN_IDENTITY:-${DEFAULT_IDENTITY:--}}"
 VERSION="${VERSION:-0.1.0}"
@@ -42,10 +42,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 if [ "$SIGN_IDENTITY" = "-" ]; then
-  echo "⚠️  ไม่พบใบรับรอง Developer ID — เซ็นแบบ ad-hoc (macOS จะถามสิทธิ์ใหม่ทุกครั้งที่ build)"
+  echo "⚠️  No Developer ID certificate found: signing ad-hoc (macOS will ask for permissions again after every build)"
   codesign --force --sign - "$APP"
 else
-  # Hardened Runtime + secure timestamp: Apple บังคับสำหรับการ notarize
+  # Hardened Runtime + secure timestamp: required by Apple for notarization
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP"
 fi
 echo "✅ Built $APP"

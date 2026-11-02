@@ -3,8 +3,8 @@ import ApplicationServices
 import Combine
 import QuartzCore
 
-/// ขอบเรืองแสงรอบหน้าต่างที่โฟกัสอยู่ (แนวเดียวกับ JankyBorders)
-/// หน้าต่าง overlay โปร่งใสคลิกทะลุได้ วางซ้อนเหนือหน้าต่างเป้าหมายพอดี ติดตามด้วย AX notification
+/// Glowing border around the focused window (in the spirit of JankyBorders)
+/// A transparent click-through overlay window placed exactly over the target window, tracked with AX notifications
 @MainActor
 final class WindowBorderManager {
     static let shared = WindowBorderManager()
@@ -31,7 +31,7 @@ final class WindowBorderManager {
     func start() {
         guard !isRunning else { return }
         guard AXIsProcessTrusted() else {
-            // รอผู้ใช้อนุญาตแล้วเริ่มเอง
+            // Wait for the user to allow it, then start automatically
             AXTrust.shared.watch()
             trustWait = AXTrust.shared.$isTrusted.filter { $0 }.first().sink { [weak self] _ in
                 MainActor.assumeIsolated {
@@ -48,7 +48,7 @@ final class WindowBorderManager {
             .store(in: &cancellables)
         ws.publisher(for: NSWorkspace.activeSpaceDidChangeNotification)
             .sink { [weak self] _ in
-                // หลังสลับ Space หน้าต่างโฟกัสอาจเปลี่ยน รอแอนิเมชันจบก่อน
+                // After a Space switch the focused window may change; wait for the animation to finish
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { self?.attachFrontmost() }
             }
             .store(in: &cancellables)
@@ -56,7 +56,7 @@ final class WindowBorderManager {
             .sink { [weak self] _ in self?.refresh() }
             .store(in: &cancellables)
 
-        // หน้าต่างของแอปนี้เอง (เช่นหน้าตั้งค่า) ไม่ใช้ AX แต่ฟังจาก NSWindow โดยตรง
+        // This app's own windows (such as Settings) are tracked through NSWindow directly, not AX
         for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification, NSWindow.didBecomeKeyNotification] {
             NotificationCenter.default.publisher(for: name)
                 .filter { ($0.object as? NSWindow)?.isBorderOverlay == false }
@@ -75,7 +75,7 @@ final class WindowBorderManager {
             }
             .store(in: &cancellables)
 
-        // ระหว่างลากหน้าต่าง บางแอปส่ง AXMoved แค่ตอนปล่อยเมาส์ จึงตามตำแหน่งเองช่วงที่กดเมาส์ค้าง
+        // While a window is dragged some apps send AXMoved only on mouse-up, so follow the position ourselves while the button is held
         if let m = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp], handler: { e in
             let down = e.type == .leftMouseDown
             MainActor.assumeIsolated { WindowBorderManager.shared.mouse(down: down) }
@@ -96,7 +96,7 @@ final class WindowBorderManager {
         isRunning = false
     }
 
-    // MARK: AX observer (ติดตามเฉพาะแอปที่อยู่หน้าสุด)
+    // MARK: AX observer (only the frontmost app is tracked)
 
     private var refcon: UnsafeMutableRawPointer { Unmanaged.passUnretained(self).toOpaque() }
 
@@ -150,7 +150,7 @@ final class WindowBorderManager {
         case kAXFocusedWindowChangedNotification, kAXMainWindowChangedNotification,
              kAXUIElementDestroyedNotification, kAXWindowDeminiaturizedNotification,
              kAXApplicationShownNotification:
-            // ให้แอปจัดหน้าต่างเสร็จก่อน
+            // Let the app finish laying out its window
             DispatchQueue.main.async { self.updateFocused() }
         default:
             refresh()
@@ -170,7 +170,7 @@ final class WindowBorderManager {
 
     // MARK: Layout
 
-    /// กรอบ (Cocoa) และ window number ของหน้าต่างที่โฟกัสอยู่ หรือ nil ถ้าไม่ควรแสดงขอบ
+    /// Frame (Cocoa) and window number of the focused window, or nil when no border should show
     private func focusedTarget() -> (rect: CGRect, id: CGWindowID?)? {
         let me = ProcessInfo.processInfo.processIdentifier
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == me {
@@ -198,7 +198,7 @@ final class WindowBorderManager {
         if c.borderShowInactive && reorder { refreshInactive(c) }
     }
 
-    // MARK: Inactive windows (ทางเลือก ปิดไว้เป็นค่าเริ่มต้น เพราะต้องอ่านรายการหน้าต่างทุกวินาที)
+    // MARK: Inactive windows (optional, off by default, because it reads the window list every second)
 
     private func updateInactiveTimer(_ on: Bool) {
         if on, inactiveTimer == nil {
@@ -231,7 +231,7 @@ final class WindowBorderManager {
                   id != focusedID
             else { continue }
             let cocoa = AXWin.toCocoa(r)
-            if screens.contains(where: { $0.equalTo(cocoa) }) { continue }   // เต็มจอ
+            if screens.contains(where: { $0.equalTo(cocoa) }) { continue }   // full screen
             found.append((id, cocoa))
         }
         let sig = found.map(\.0)
@@ -252,7 +252,7 @@ final class WindowBorderManager {
         CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
     }
 
-    /// หา CGWindowID จาก pid + กรอบ (ไม่ใช้ private API _AXUIElementGetWindow)
+    /// Find the CGWindowID from pid + frame (without the private _AXUIElementGetWindow API)
     private static func windowID(pid: pid_t, axFrame: CGRect) -> CGWindowID? {
         for info in onScreenWindows() {
             guard (info[kCGWindowOwnerPID as String] as? pid_t) == pid,
@@ -319,7 +319,7 @@ final class BorderOverlay: NSWindow {
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
-    // ไม่ให้ AppKit ดันหน้าต่างลงมาใต้แถบเมนู ไม่งั้นขอบจะเลื่อนไม่ตรงกับหน้าต่างที่ชิดขอบบน
+    // Keep AppKit from pushing the window below the menu bar, or the border would be offset from windows at the top edge
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 
     func apply(rect: CGRect, style s: Style) {
@@ -330,7 +330,7 @@ final class BorderOverlay: NSWindow {
         setFrame(rect.insetBy(dx: -pad, dy: -pad), display: false)
         let bounds = CGRect(origin: .zero, size: frame.size)
         container.frame = bounds
-        // วาดเส้นด้านนอกขอบหน้าต่าง จะได้ไม่ทับเนื้อหา
+        // Draw the stroke outside the window edge so it doesn't cover content
         let inset = pad - s.width / 2
         let path = CGPath(roundedRect: bounds.insetBy(dx: inset, dy: inset),
                           cornerWidth: s.radius + s.width / 2, cornerHeight: s.radius + s.width / 2, transform: nil)

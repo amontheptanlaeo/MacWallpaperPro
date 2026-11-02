@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { base64ToBytes } from "../src/lib/crypto";
 import { manifestMessage } from "../src/lib/manifest";
 import { PREVIEW_CSP } from "../src/routes/public";
-import { call, insertWallpaper, signedInUser } from "./helpers";
+import { call, insertWallpaper, signedInUser, signingPublicKey } from "./helpers";
 
 // Public key published in docs/ARCHITECTURE.md (raw 32 bytes, base64).
 const CONTRACT_PUBLIC_KEY = "4ACj7B0U1mZeAEoA9oiCy4JPSu3xO/CMuQqvRDYX604=";
@@ -48,6 +48,12 @@ describe("free downloads", () => {
 });
 
 describe("signed manifest", () => {
+  // Only meaningful with the maintainer's real key; CI signs with an ephemeral key instead.
+  it.runIf(env.TEST_SIGNING_KEY_IS_REAL === "1")("the real signing key matches the public key in docs/ARCHITECTURE.md", () => {
+    expect(env.TEST_SIGNING_PUBLIC_KEY).toBe(CONTRACT_PUBLIC_KEY);
+  });
+
+
   it("verifies with the contract public key over the exact message format", async () => {
     const id = "u_" + crypto.randomUUID().slice(0, 12);
     await env.DB.prepare("INSERT INTO users (id, email, display_name) VALUES (?, ?, 'ผู้สร้าง')").bind(id, `${id}@example.com`).run();
@@ -60,7 +66,7 @@ describe("signed manifest", () => {
 
     const msg = `macwallpaperpro-manifest-v1\n${wp.id}\n1\n${wp.sha}\n${wp.size}`;
     expect(manifestMessage(m)).toBe(msg);
-    const pub = await crypto.subtle.importKey("raw", base64ToBytes(CONTRACT_PUBLIC_KEY), { name: "Ed25519" }, false, ["verify"]);
+    const pub = await signingPublicKey();
     const sig = base64ToBytes(m.signature);
     expect(sig.byteLength).toBe(64);
     expect(await crypto.subtle.verify({ name: "Ed25519" }, pub, sig, new TextEncoder().encode(msg))).toBe(true);
@@ -75,7 +81,9 @@ describe("preview sandbox", () => {
     const wp = await insertWallpaper({ ownerId: owner.id });
     const res = await call(`/preview/${wp.id}`);
     expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Security-Policy")).toBe(CONTRACT_PREVIEW_CSP);
+    // The wallpaper policy is unchanged; only frame-ancestors is appended (it never affects the
+    // app's top-level WKWebView load, only who may embed the page).
+    expect(res.headers.get("Content-Security-Policy")).toBe(`${CONTRACT_PREVIEW_CSP}; frame-ancestors 'self'`);
     expect(PREVIEW_CSP).toBe(CONTRACT_PREVIEW_CSP);
     expect(res.headers.get("Content-Type")).toMatch(/^text\/html/);
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
@@ -87,7 +95,7 @@ describe("preview sandbox", () => {
     const res = await call("/preview-sandbox");
     expect(res.status).toBe(200);
     const csp = res.headers.get("Content-Security-Policy")!;
-    expect(csp).toBe(CONTRACT_PREVIEW_CSP);
+    expect(csp).toBe(`${CONTRACT_PREVIEW_CSP}; frame-ancestors 'self'`);
     expect(csp).not.toMatch(/googlesyndication|doubleclick|google/);
     expect(await res.text()).toContain("postMessage");
   });
@@ -100,8 +108,8 @@ describe("listing, categories and detail", () => {
     const res = await call("/api/wallpapers?sort=new&tag=test");
     const body = (await res.json()) as { items: Record<string, unknown>[]; next: string | null };
     const item = body.items.find((i) => i.id === wp.id)!;
-    expect(item).toMatchObject({ priceCents: 0, currency: "thb", tags: ["test"], category: "cute", thumbUrl: `/api/wallpapers/${wp.id}/thumb` });
-    expect(Object.keys(item).sort()).toEqual(["author", "category", "createdAt", "currency", "downloads", "id", "priceCents", "tags", "thumbUrl", "title"]);
+    expect(item).toMatchObject({ priceCents: 0, currency: "thb", tags: ["test"], category: "cute", kind: "html", thumbUrl: `/api/wallpapers/${wp.id}/thumb` });
+    expect(Object.keys(item).sort()).toEqual(["author", "category", "createdAt", "currency", "downloads", "id", "kind", "priceCents", "tags", "thumbUrl", "title"]);
     const d = (await (await call(`/api/wallpapers/${wp.id}`)).json()) as Record<string, unknown>;
     expect(d).toMatchObject({ id: wp.id, status: "approved", version: 1, sha256: wp.sha, sizeBytes: wp.size, priceCents: 0, category: "cute" });
   });

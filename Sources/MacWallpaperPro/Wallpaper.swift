@@ -4,7 +4,7 @@ import Combine
 import SwiftUI
 import WebKit
 
-// MARK: - Manager: หนึ่งหน้าต่างต่อหนึ่งจอ วางที่ระดับ desktop (ใต้ไอคอนบน desktop)
+// MARK: - Manager: one window per display at desktop level (below the desktop icons)
 
 @MainActor
 final class WallpaperManager {
@@ -14,7 +14,7 @@ final class WallpaperManager {
     private let webViews = NSHashTable<WKWebView>.weakObjects()
 
     func start() {
-        // rebuild หลังกฎบล็อก network พร้อม เพื่อให้ทุก webview ได้กฎนี้ตั้งแต่สร้าง
+        // Rebuild once the network-blocking rules are ready, so every web view has them from creation
         Task {
             await WallpaperSandbox.prepare()
             let c = Store.shared.config
@@ -39,8 +39,8 @@ final class WallpaperManager {
     func reload() { webViews.allObjects.forEach { $0.reload() } }
 
     // MARK: Cursor feed
-    // หน้าต่าง wallpaper ไม่รับ mouse event (อยู่หลังสุด) จึงอ่านตำแหน่งเคอร์เซอร์จากระบบ
-    // แล้วส่งเป็น mousemove/mousedown/mouseup/click เข้าหน้าเว็บ
+    // Wallpaper windows get no mouse events (they're at the very back), so read the cursor position from the system
+    // and forward it to the page as mousemove/mousedown/mouseup/click
 
     private var cursorTimer: Timer?
     private var clickMonitor: Any?
@@ -51,7 +51,7 @@ final class WallpaperManager {
         cursorTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
             MainActor.assumeIsolated { WallpaperManager.shared.tickCursor() }
         }
-        // global monitor ของ mouse event ไม่ต้องขอสิทธิ์ Accessibility
+        // A global mouse-event monitor needs no Accessibility permission
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { e in
             let type = e.type == .leftMouseDown ? "down" : "up"
             MainActor.assumeIsolated {
@@ -77,7 +77,7 @@ final class WallpaperManager {
         }
     }
 
-    /// คลิกนี้ตกบน Desktop จริงไหม (ไม่มีหน้าต่างปกติ/เมนูบาร์/Dock บังอยู่)
+    /// Whether this click really landed on the Desktop (no normal window/menu bar/Dock covering it)
     private static func isDesktop(at p: NSPoint) -> Bool {
         let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
         let cg = CGPoint(x: p.x, y: primaryTop - p.y)
@@ -115,22 +115,29 @@ final class WallpaperManager {
 
     // MARK: Snapshot → Desktop + Lock Screen image
 
+    private static func frame(of url: URL) async -> NSImage? {
+        let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        gen.appliesPreferredTrackTransform = true
+        guard let cg = try? await gen.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image else { return nil }
+        return NSImage(cgImage: cg, size: .zero)
+    }
+
     struct SnapshotResult { let success: Bool; let path: String?; let message: String }
 
     func applySnapshotAsSystemWallpaper() async -> SnapshotResult {
         let cfg = Store.shared.config
         var image: NSImage?
+        let installedVideo = cfg.wallpaperMode == .installed
+            ? Community.shared.installedWallpaper(cfg.installedID).flatMap { $0.isVideo ? $0.videoURL : nil } : nil
         switch cfg.wallpaperMode {
+        case .installed where installedVideo != nil:
+            image = await Self.frame(of: installedVideo!)
         case .interactive, .installed, .preset, .web:
             if let wv = webViews.allObjects.first {
                 image = try? await wv.takeSnapshot(configuration: nil)
             }
         case .video:
-            let gen = AVAssetImageGenerator(asset: AVURLAsset(url: URL(fileURLWithPath: cfg.videoPath)))
-            gen.appliesPreferredTrackTransform = true
-            if let cg = try? await gen.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image {
-                image = NSImage(cgImage: cg, size: .zero)
-            }
+            image = await Self.frame(of: URL(fileURLWithPath: cfg.videoPath))
         case .off:
             return SnapshotResult(success: false, path: nil, message: tr("Live wallpaper is off. Turn it on and try again."))
         }
@@ -140,7 +147,7 @@ final class WallpaperManager {
 
         let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Pictures/MacWallpaperPro")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        // ชื่อไฟล์ใหม่ทุกครั้ง เพราะ macOS cache ภาพตาม path
+        // A new file name every time, because macOS caches images by path
         let url = dir.appendingPathComponent("wallpaper-\(Int(Date().timeIntervalSince1970)).png")
         do {
             try png.write(to: url)
@@ -170,8 +177,11 @@ struct WallpaperRoot: View {
                     Color.black
                 }
             case .installed:
-                // ไม่มีกฎบล็อก network = ไม่โหลดของจาก Community เด็ดขาด
-                if WallpaperSandbox.ruleList != nil, let w = Community.shared.installedWallpaper(c.installedID) {
+                if let w = Community.shared.installedWallpaper(c.installedID), w.isVideo {
+                    // Community videos play directly in AVPlayer (not WebKit), muted and looping
+                    VideoWallpaper(url: w.videoURL)
+                } else if WallpaperSandbox.ruleList != nil, let w = Community.shared.installedWallpaper(c.installedID) {
+                    // No network-blocking rules = never load anything from the Community
                     WebWallpaper(source: .localHTML(w.indexURL), params: Shaders.speedOnly(c), offline: true)
                 } else {
                     Color.black
@@ -240,11 +250,11 @@ struct WebWallpaper: NSViewRepresentable {
     enum Source: Equatable { case html(String), url(URL), localHTML(URL) }
     let source: Source
     let params: String
-    /// false = ตัวอย่างในหน้าตั้งค่า (ไม่ต้องรับเคอร์เซอร์จากระบบ/ไม่ใช้จับภาพ)
+    /// false = a preview in Settings (no system cursor input, not used for capture)
     var isDesktop = true
-    /// true = บล็อก network ทั้งหมด (ใช้กับทุกอย่างยกเว้นโหมดเว็บไซต์ที่ผู้ใช้ตั้งเอง)
+    /// true = block all network access (used for everything except the user's own website mode)
     var offline = true
-    /// เรียกเมื่อหน้าโหลดและเรนเดอร์ไปสักพัก (ใช้เก็บภาพตัวอย่าง)
+    /// Called once the page has loaded and rendered for a moment (used to capture previews)
     var onReady: ((WKWebView) -> Void)? = nil
 
     final class Coordinator: NSObject, WKNavigationDelegate {
@@ -274,7 +284,7 @@ struct WebWallpaper: NSViewRepresentable {
         return wv
     }
 
-    /// แปลงเคอร์เซอร์จากแอป เป็น DOM event มาตรฐาน หน้า HTML ทั่วไปจึงใช้ได้ทันที
+    /// Turns the app's cursor into standard DOM events, so ordinary HTML pages just work
     private static let cursorBridge = """
     window.__mwpCursor = function (x, y, type) {
       const t = document.elementFromPoint(x, y) || document.body || document;
@@ -295,7 +305,7 @@ struct WebWallpaper: NSViewRepresentable {
             switch source {
             case .html(let html): wv.loadHTMLString(html, baseURL: nil)
             case .localHTML(let url):
-                // บังคับ UTF-8 เสมอ ไฟล์ที่ไม่ได้ระบุ charset จะได้ไม่เพี้ยน
+                // Always force UTF-8 so files without a charset aren't garbled
                 if let data = try? Data(contentsOf: url) {
                     wv.load(data, mimeType: "text/html", characterEncodingName: "utf-8", baseURL: url)
                 }
@@ -351,7 +361,7 @@ struct VideoWallpaper: NSViewRepresentable {
 }
 
 enum BuiltinWallpaper {
-    /// Wallpapers/nebula/index.html ใน app bundle (หรือจาก source tree ตอนรันด้วย swift run)
+    /// Wallpapers/nebula/index.html in the app bundle (or from the source tree when run with swift run)
     static var url: URL? {
         if let u = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "Wallpapers/nebula") {
             return u

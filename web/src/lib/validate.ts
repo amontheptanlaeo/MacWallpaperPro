@@ -3,6 +3,10 @@ import { HttpError } from "./http";
 export const MAX_HTML_BYTES = 10 * 1024 * 1024; // 10 MB
 export const MAX_THUMB_BYTES = 2 * 1024 * 1024; // 2 MB
 export const MAX_UPLOAD_BODY = MAX_HTML_BYTES + MAX_THUMB_BYTES + 256 * 1024;
+export const MAX_VIDEO_BYTES = 60 * 1024 * 1024; // 60 MB (docs/ARCHITECTURE.md)
+export const MAX_CREDIT = 120;
+export const MAX_LICENSE = 80;
+export const MAX_SOURCE_URL = 500;
 export const MAX_TITLE = 80;
 export const MAX_DESCRIPTION = 2000;
 export const MAX_TAGS = 8;
@@ -21,6 +25,57 @@ export function sniffImage(b: Uint8Array): ImageType | null {
 }
 
 const bad = (code: string, message: string) => new HttpError(400, code, message);
+
+export type WallpaperKind = "html" | "video";
+export const KINDS = ["html", "video"] as const;
+export function isKind(v: string): v is WallpaperKind {
+  return v === "html" || v === "video";
+}
+
+/**
+ * MP4 / MOV (ISO base media file format): the file starts with a box whose type is "ftyp"
+ * (bytes 4..7). QuickTime files may start with "moov"/"wide"/"free"/"mdat" instead, but every
+ * encoder we target (ffmpeg, AVFoundation, HandBrake) writes "ftyp" first, so that is required.
+ * The 4-byte major brand that follows must be printable ASCII. Needs only the first 12 bytes.
+ */
+export function sniffVideo(b: Uint8Array): boolean {
+  if (b.length < 12) return false;
+  const size = ((b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]) >>> 0;
+  if (size !== 1 && size < 12) return false; // 1 = 64-bit size follows
+  if (b[4] !== 0x66 || b[5] !== 0x74 || b[6] !== 0x79 || b[7] !== 0x70) return false; // "ftyp"
+  for (let i = 8; i < 12; i++) if (b[i] < 0x20 || b[i] > 0x7e) return false;
+  return true;
+}
+
+export function isSha256Hex(s: string): boolean {
+  return /^[0-9a-f]{64}$/.test(s);
+}
+
+/** Attribution required for every video (the uploader must also confirm the rights). */
+export function validateVideoMeta(fields: { credit: string; license: string; sourceUrl: string; rights: string }) {
+  const credit = fields.credit.trim();
+  if (!credit || [...credit].length > MAX_CREDIT || /[\u0000-\u001f]/.test(credit))
+    throw bad("invalid_credit", `Say who made the video (up to ${MAX_CREDIT} characters).`);
+  const license = fields.license.trim();
+  if (!license || [...license].length > MAX_LICENSE || /[\u0000-\u001f]/.test(license))
+    throw bad("invalid_license", `Name the license (up to ${MAX_LICENSE} characters), e.g. "CC0 1.0".`);
+  const rawUrl = fields.sourceUrl.trim();
+  let sourceUrl: string | null = null;
+  if (rawUrl) {
+    let u: URL | null = null;
+    try {
+      u = new URL(rawUrl);
+    } catch {
+      u = null;
+    }
+    if (!u || (u.protocol !== "https:" && u.protocol !== "http:") || rawUrl.length > MAX_SOURCE_URL || u.username || u.password)
+      throw bad("invalid_source_url", "The source link must be an http(s) address.");
+    sourceUrl = u.href;
+  }
+  if (!["on", "true", "1", "yes"].includes(fields.rights.trim().toLowerCase()))
+    throw bad("rights_required", "Confirm that you own this video or that it is public domain/CC0.");
+  return { credit, license, sourceUrl };
+}
 
 export function validateHtml(bytes: Uint8Array): string {
   if (bytes.byteLength === 0) throw bad("invalid_file", "index.html is empty.");
@@ -75,9 +130,12 @@ export function validateMeta(fields: { title: string; description: string; categ
 }
 
 // ---------------------------------------------------------------------------
-// Suspicious-pattern scanner. Findings never block an upload; they are shown to
-// the admin in the moderation queue. Wallpapers run offline in the app, so any
-// network or dynamic-code API is a red flag worth a closer look.
+// Suspicious-pattern scanner. ADVISORY ONLY: findings never block an upload; they
+// are shown to the admin in the moderation queue. A clean result is NOT proof of
+// safety (obfuscation can always get past a regex). The real controls are human
+// moderation, the preview CSP and the app's network-blocking rule list.
+// Wallpapers run offline in the app, so any network or dynamic-code API is a red
+// flag worth a closer look.
 // ---------------------------------------------------------------------------
 export interface ScanFinding {
   id: string;
@@ -102,13 +160,22 @@ const RULES: { id: string; severity: ScanFinding["severity"]; re: string }[] = [
   { id: "window_open", severity: "medium", re: String.raw`\bwindow\.open\s*\(|\btop\.location\b` },
   { id: "embed", severity: "medium", re: String.raw`<\s*(?:iframe|object|embed|form)\b` },
   { id: "worker", severity: "low", re: String.raw`\bnew\s+(?:Shared)?Worker\s*\(|\bserviceWorker\b` },
+  // Common evasions: names built from string pieces ("fet"+"ch", 'ev'+'al'), bare Function(),
+  // bracket access on the global object, base64-decoded code, navigation and redirects.
+  { id: "obfuscated_name", severity: "high", re: String.raw`["'\x60](?:fe|fet|fetc|ev|eva|Fu|Fun|Func|Funct|Functi|Functio|XM|XML|XMLH|We|Web|WebS|Webs|imp|impo|impor|at|ato|sendB)["'\x60]\s*\+\s*["'\x60]` },
+  { id: "function_call", severity: "high", re: String.raw`(?<![\w$.])Function\s*\(` },
+  { id: "global_bracket", severity: "medium", re: String.raw`\b(?:window|globalThis|self|top|parent|frames)\s*\[` },
+  { id: "atob", severity: "medium", re: String.raw`\batob\s*\(` },
+  { id: "location", severity: "medium", re: String.raw`\blocation(?:\s*\.\s*href)?\s*=(?!=)|\blocation\s*\.\s*(?:assign|replace)\s*\(` },
+  { id: "meta_refresh", severity: "medium", re: String.raw`<meta\b[^>]*http-equiv\s*=\s*["']?\s*refresh` },
+  { id: "base_tag", severity: "medium", re: String.raw`<\s*base\b` },
   // External URLs (http/https/ws/protocol-relative); XML namespace ids and bare "//" comments are filtered below.
   { id: "external_url", severity: "high", re: String.raw`(?:(?:https?|wss?):)?\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}[^\s"'<>)]*` },
 ];
 
 // One combined regex => a single pass over the file, which keeps CPU low for large uploads.
 const COMBINED = new RegExp(RULES.map((r, i) => `(?<r${i}>${r.re})`).join("|"), "gi");
-const CASE_SENSITIVE = new Set(["xhr", "websocket", "eventsource", "beacon", "import_scripts", "cookie", "worker", "fetch", "eval", "function_ctor", "dynamic_import", "string_timer", "window_open"]);
+const CASE_SENSITIVE = new Set(["xhr", "websocket", "eventsource", "beacon", "import_scripts", "cookie", "worker", "fetch", "eval", "function_ctor", "dynamic_import", "string_timer", "window_open", "obfuscated_name", "function_call", "global_bracket", "atob", "location"]);
 const EXACT = RULES.map((r) => new RegExp(r.re));
 const NAMESPACE_ALLOW = /^(?:https?:)?\/\/(?:www\.)?w3\.org\//i;
 

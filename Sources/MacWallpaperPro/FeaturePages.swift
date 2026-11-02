@@ -4,13 +4,13 @@ import SwiftUI
 
 // MARK: - Shared rows
 
-/// แถวสไลเดอร์พร้อมคำอธิบายและค่าปัจจุบัน
+/// Slider row with a description and the current value
 struct FeatureSlider: View {
     let title: String
     var subtitle: String? = nil
     @Binding var value: Double
     let range: ClosedRange<Double>
-    var step: Double? = nil   // nil = ลากต่อเนื่อง ไม่มีขีด
+    var step: Double? = nil   // nil = continuous, no tick marks
     var unit = "pt"
 
     var body: some View {
@@ -22,7 +22,7 @@ struct FeatureSlider: View {
     }
 }
 
-/// สถานะสิทธิ์การช่วยการเข้าถึง แบบเดียวกับหน้า ออกจากแอปอัตโนมัติ
+/// Accessibility permission status, same as on the Auto Quit page
 struct AXPermissionSection: View {
     @ObservedObject private var trust = AXTrust.shared
 
@@ -42,7 +42,7 @@ struct AXPermissionSection: View {
     }
 }
 
-/// แถวเลือกสี
+/// Color picker row
 struct ColorRow: View {
     let title: String
     var subtitle: String? = nil
@@ -181,7 +181,7 @@ struct SnappingPage: View {
     }
 }
 
-/// สถานะการบันทึกคีย์ลัด (บันทึกได้ทีละช่อง)
+/// Shortcut recording state (one field at a time)
 @MainActor
 final class ShortcutRecording: ObservableObject {
     static let shared = ShortcutRecording()
@@ -204,7 +204,7 @@ final class ShortcutRecording: ObservableObject {
         action = nil
     }
 
-    /// คืนค่า true เมื่อกินอีเวนต์นี้ไปแล้ว
+    /// Returns true when this event was consumed
     private func handle(_ e: NSEvent) -> Bool {
         guard let a = action else { return false }
         let plain = e.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
@@ -215,7 +215,7 @@ final class ShortcutRecording: ObservableObject {
             stop(); return true
         }
         guard let combo = HotKeyCombo(event: e) else { NSSound.beep(); return true }
-        // ถ้าซ้ำกับ action อื่น ย้ายมาใช้ที่นี่แทน
+        // If another action already uses it, move it here
         var map = fs.config.snapShortcuts
         for (k, v) in map where v == combo { map[k] = HotKeyCombo.none }
         map[a.rawValue] = combo
@@ -404,7 +404,7 @@ struct CustomBarPage: View {
         .onAppear {
             systemHide = CustomMenuBar.systemAutoHide
             bar.refreshSystemBarState()
-            BarStats.shared.start()   // ให้ตัวอย่างมีข้อมูลจริง
+            BarStats.shared.start()   // so the preview shows real data
         }
         .onDisappear {
             if !bar.isRunning { BarStats.shared.stop() }

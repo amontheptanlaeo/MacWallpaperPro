@@ -1,10 +1,10 @@
 import { escapeHtml as e } from "../lib/http";
 import type { ProviderId } from "../lib/oauth";
-import { CATEGORIES, MAX_DESCRIPTION, MAX_TITLE } from "../lib/validate";
+import { CATEGORIES, MAX_CREDIT, MAX_DESCRIPTION, MAX_LICENSE, MAX_SOURCE_URL, MAX_TITLE } from "../lib/validate";
 import type { WallpaperDetail, WallpaperSummary } from "../lib/wallpapers";
 import { ad, card, catLabel, chips, fmtCount, fmtDate } from "./components";
 import { GITHUB_LOGO, GOOGLE_LOGO, icon } from "./icons";
-import { jsonBlock, page, REPO_URL, type Ctx } from "./layout";
+import { jsonBlock, KOFI_URL, page, REPO_URL, SPONSORS_URL, type Ctx } from "./layout";
 
 const installModal = (ctx: Ctx) => {
   const { t } = ctx;
@@ -152,6 +152,19 @@ export function landingPage(
   </div>
 </section>
 
+<section class="section wrap support" id="support" aria-labelledby="support-h">
+  <div class="support__box">
+    <div>
+      <h2 id="support-h" class="h3">${e(t("support.title"))}</h2>
+      <p>${e(t("support.body"))}</p>
+    </div>
+    <div class="support__actions">
+      <a class="btn btn--glass" href="${SPONSORS_URL}" rel="noopener">${icon("heart")}<span>${e(t("support.github"))}</span></a>
+      <a class="btn btn--glass" href="${KOFI_URL}" rel="noopener">${icon("coffee")}<span>${e(t("support.kofi"))}</span></a>
+    </div>
+  </div>
+</section>
+
 <section class="section wrap faq" aria-labelledby="faq-h">
   <h2 id="faq-h" class="h2">${e(t("faq.title"))}</h2>
   <div class="faq__list">${faqs}</div>
@@ -171,14 +184,14 @@ ${installModal(ctx)}`;
 // ---------------------------------------------------------------------------
 const FIRST_ROWS = 8;
 
-export function browsePage(ctx: Ctx, data: { items: WallpaperSummary[]; next: string | null; sort: string; q: string; category: string }): Response {
+export function browsePage(ctx: Ctx, data: { items: WallpaperSummary[]; next: string | null; sort: string; q: string; category: string; kind: string }): Response {
   const { t } = ctx;
   const a = data.items.slice(0, FIRST_ROWS);
   const b = data.items.slice(FIRST_ROWS);
   const extra = new URLSearchParams();
   if (data.q) extra.set("q", data.q);
   if (data.sort === "popular") extra.set("sort", "popular");
-  const title = data.category !== "all" ? catLabel(ctx, data.category) : t("browse.title");
+  const title = data.kind === "video" ? t("browse.videos") : data.category !== "all" ? catLabel(ctx, data.category) : t("browse.title");
   const body = `
 <section class="pagehead wrap">
   <div class="pagehead__glow" aria-hidden="true"></div>
@@ -191,6 +204,7 @@ export function browsePage(ctx: Ctx, data: { items: WallpaperSummary[]; next: st
       <input type="search" name="q" value="${e(data.q)}" placeholder="${e(t("browse.searchPlaceholder"))}" maxlength="100" autocomplete="off" enterkeyhint="search">
     </label>
     ${data.category !== "all" ? `<input type="hidden" name="category" value="${e(data.category)}">` : ""}
+    ${data.kind === "video" ? `<input type="hidden" name="kind" value="video">` : ""}
     <label class="select">
       <span class="sr">${e(t("browse.sort"))}</span>
       <select name="sort" data-sort>
@@ -201,7 +215,7 @@ export function browsePage(ctx: Ctx, data: { items: WallpaperSummary[]; next: st
     </label>
     <noscript><button class="btn btn--glass" type="submit">${e(t("browse.search"))}</button></noscript>
   </form>
-  ${chips(ctx, data.category, "/community", extra)}
+  ${chips(ctx, data.category, "/community", extra, data.kind)}
 </section>
 
 <section class="wrap gallery" data-gallery data-next="${e(data.next ?? "")}" aria-live="polite" aria-busy="false">
@@ -237,6 +251,14 @@ ${installModal(ctx)}`;
 // ---------------------------------------------------------------------------
 // Wallpaper detail
 // ---------------------------------------------------------------------------
+function sourceHost(u: string): string {
+  try {
+    return new URL(u).hostname.replace(/^www\./, "");
+  } catch {
+    return u;
+  }
+}
+
 export function detailPage(ctx: Ctx, w: WallpaperDetail, more: WallpaperSummary[], rejectReason: string | null): Response {
   const { t } = ctx;
   const notice =
@@ -248,6 +270,14 @@ export function detailPage(ctx: Ctx, w: WallpaperDetail, more: WallpaperSummary[
   const tags = w.tags.length
     ? `<ul class="tags">${w.tags.map((tg) => `<li><a href="/community?q=${encodeURIComponent(tg)}">#${e(tg)}</a></li>`).join("")}</ul>`
     : "";
+  const isVideo = w.kind === "video";
+  const attribution = isVideo
+    ? `<dl class="facts facts--credit">
+        <div><dt>${e(t("detail.credit"))}</dt><dd dir="auto">${e(w.credit || "-")}</dd></div>
+        <div><dt>${e(t("detail.license"))}</dt><dd dir="auto">${e(w.license || "-")}</dd></div>
+        ${w.sourceUrl ? `<div class="facts__wide"><dt>${e(t("detail.source"))}</dt><dd><a href="${e(w.sourceUrl)}" rel="noopener noreferrer nofollow ugc" target="_blank">${e(sourceHost(w.sourceUrl))}</a></dd></div>` : ""}
+      </dl>`
+    : "";
   const size = w.sizeBytes >= 1024 * 1024 ? `${(w.sizeBytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(w.sizeBytes / 1024))} KB`;
   const body = `
 <div class="detail wrap" data-detail data-id="${e(w.id)}">
@@ -257,17 +287,22 @@ export function detailPage(ctx: Ctx, w: WallpaperDetail, more: WallpaperSummary[
       <div class="display" data-display>
         <div class="display__screen">
           <img class="display__poster" src="${e(w.thumbUrl)}" alt="" width="1600" height="1000" fetchpriority="high">
-          <iframe class="display__frame" data-live-frame title="${e(t("card.previewing"))}: ${e(w.title)}" sandbox="allow-scripts" referrerpolicy="no-referrer" loading="eager" src="/preview/${e(w.id)}"></iframe>
+          ${
+            isVideo
+              ? // Same-origin <video> (not the sandboxed /preview page) so owners/moderators can watch pending items too.
+                `<video class="display__frame" data-live-video autoplay loop muted playsinline preload="auto" disablepictureinpicture aria-label="${e(t("card.previewing"))}: ${e(w.title)}" src="/api/wallpapers/${e(w.id)}/download"></video>`
+              : `<iframe class="display__frame" data-live-frame title="${e(t("card.previewing"))}: ${e(w.title)}" sandbox="allow-scripts" referrerpolicy="no-referrer" loading="eager" src="/preview/${e(w.id)}"></iframe>`
+          }
         </div>
         <div class="display__bar">
-          <p class="display__note">${icon("cursor", "icon icon--sm")}<span>${e(t("detail.previewNote"))}</span></p>
+          <p class="display__note">${icon(isVideo ? "play" : "cursor", "icon icon--sm")}<span>${e(t(isVideo ? "detail.previewNoteVideo" : "detail.previewNote"))}</span></p>
           <button type="button" class="btn btn--ghost btn--sm" data-fullscreen>${icon("expand")}<span>${e(t("detail.fullscreen"))}</span></button>
         </div>
       </div>
     </div>
     <aside class="detail__side">
       ${notice}
-      <p class="detail__cat"><a class="chip chip--${e(w.category)}" href="/community?category=${e(w.category)}"><span class="chip__dot" aria-hidden="true"></span>${e(catLabel(ctx, w.category))}</a></p>
+      <p class="detail__cat"><a class="chip chip--${e(w.category)}" href="/community?category=${e(w.category)}"><span class="chip__dot" aria-hidden="true"></span>${e(catLabel(ctx, w.category))}</a>${isVideo ? ` <a class="chip chip--video" href="/community?kind=video">${icon("play", "icon icon--xs")}${e(t("card.video"))}</a>` : ""}</p>
       <h1 class="detail__title">${e(w.title)}</h1>
       <p class="detail__author">${e(t("card.by", { name: w.author.name }))}</p>
       <div class="detail__cta">
@@ -281,6 +316,7 @@ export function detailPage(ctx: Ctx, w: WallpaperDetail, more: WallpaperSummary[
         <div><dt>${e(t("detail.size"))}</dt><dd>${e(size)}</dd></div>
         <div><dt>${e(t("detail.version"))}</dt><dd>${w.version}</dd></div>
       </dl>
+      ${attribution}
       ${tags ? `<div class="detail__tags"><h2 class="sr">${e(t("detail.tags"))}</h2>${tags}</div>` : ""}
       <button type="button" class="btn btn--ghost btn--sm" data-share data-copied="${e(t("detail.copied"))}">${icon("link")}<span>${e(t("detail.share"))}</span></button>
     </aside>
@@ -376,7 +412,22 @@ export function uploadPage(ctx: Ctx, signedIn: boolean, providers: ProviderId[],
 </section>
 <div class="wrap upload" data-upload>
   <form class="upload__form" data-upload-form novalidate>
-    <div class="drop" data-drop="file">
+    <fieldset class="kindpick">
+      <legend class="h4">${e(t("up.kindLabel"))}</legend>
+      <label class="kindpick__opt"><input type="radio" name="kind" value="html" checked><span>${icon("code", "icon icon--sm")}${e(t("up.kindHtml"))}</span></label>
+      <label class="kindpick__opt"><input type="radio" name="kind" value="video"><span>${icon("play", "icon icon--sm")}${e(t("up.kindVideo"))}</span></label>
+    </fieldset>
+    <div class="drop" data-drop="video" data-only="video" hidden>
+      <input class="drop__input" id="f-video" type="file" name="video" accept=".mp4,.mov,.m4v,video/mp4,video/quicktime">
+      <label class="drop__zone" for="f-video">
+        ${icon("play", "icon icon--lg")}
+        <span class="drop__label">${e(t("up.videoLabel"))}</span>
+        <span class="drop__cta" data-drop-text>${e(t("up.videoDrop"))}</span>
+      </label>
+      <p class="hint">${e(t("up.videoHint"))}</p>
+      <p class="fielderr" data-err-for="video" role="alert"></p>
+    </div>
+    <div class="drop" data-drop="file" data-only="html">
       <input class="drop__input" id="f-file" type="file" name="file" accept=".html,.htm,text/html" required>
       <label class="drop__zone" for="f-file">
         ${icon("file", "icon icon--lg")}
@@ -401,12 +452,18 @@ export function uploadPage(ctx: Ctx, signedIn: boolean, providers: ProviderId[],
     <label class="field"><span>${e(t("up.categoryLabel"))} <b aria-hidden="true">*</b></span>
       <span class="select select--field"><select name="category" required><option value="">${e(t("up.categoryChoose"))}</option>${options}</select>${icon("chevron", "icon icon--sm")}</span>
       <em class="fielderr" data-err-for="category" role="alert"></em></label>
+    <div class="videometa" data-only="video" hidden>
+      <label class="field"><span>${e(t("up.creditLabel"))} <b aria-hidden="true">*</b></span><input name="credit" maxlength="${MAX_CREDIT}" autocomplete="off" placeholder="NASA Goddard Space Flight Center"><small class="hint">${e(t("up.creditHint"))}</small><em class="fielderr" data-err-for="credit" role="alert"></em></label>
+      <label class="field"><span>${e(t("up.licenseLabel"))} <b aria-hidden="true">*</b></span><input name="license" maxlength="${MAX_LICENSE}" autocomplete="off" list="license-list" placeholder="CC0 1.0"><datalist id="license-list"><option value="CC0 1.0"><option value="Public domain"><option value="Public domain (NASA)"><option value="Own work"></datalist><small class="hint">${e(t("up.licenseHint"))}</small><em class="fielderr" data-err-for="license" role="alert"></em></label>
+      <label class="field"><span>${e(t("up.sourceLabel"))}</span><input name="sourceUrl" type="url" inputmode="url" maxlength="${MAX_SOURCE_URL}" autocomplete="off" placeholder="https://"><em class="fielderr" data-err-for="sourceUrl" role="alert"></em></label>
+    </div>
     <label class="field"><span>${e(t("up.descLabel"))}</span><textarea name="description" rows="4" maxlength="${MAX_DESCRIPTION}"></textarea><small class="hint">${e(t("up.descHint"))}</small><em class="fielderr" data-err-for="description" role="alert"></em></label>
     <label class="field"><span>${e(t("up.tagsLabel"))}</span><input name="tags" maxlength="220" placeholder="cozy, rain, lofi" autocomplete="off"><small class="hint">${e(t("up.tagsHint"))}</small><em class="fielderr" data-err-for="tags" role="alert"></em></label>
     <div class="rules">
       <h2 class="h4">${e(t("up.rulesTitle"))}</h2>
       <ul><li>${e(t("up.rule1"))}</li><li>${e(t("up.rule2"))}</li><li>${e(t("up.rule3"))}</li></ul>
     </div>
+    <label class="check" data-only="video" hidden><input type="checkbox" name="rights" value="on"><span>${e(t("up.rights"))}</span><em class="fielderr" data-err-for="rights" role="alert"></em></label>
     <p class="formerr" data-form-error role="alert" hidden></p>
     <button class="btn btn--light btn--lg btn--block" type="submit" data-submit>${icon("upload")}<span>${e(t("up.submit"))}</span></button>
   </form>
@@ -438,7 +495,22 @@ export function minePage(ctx: Ctx): Response {
     scripts: ["/assets/js/mine.js"],
     body: `<section class="pagehead wrap"><div class="pagehead__glow" aria-hidden="true"></div><h1 class="h1">${e(t("mine.title"))}</h1><p class="lede">${e(t("mine.lede"))}</p>
   <a class="btn btn--light" href="/community/upload">${icon("upload")}<span>${e(t("nav.upload"))}</span></a></section>
-<section class="wrap"><ul class="rows" data-mine aria-busy="true"><li class="rows__loading">${e(t("browse.loading"))}</li></ul></section>`,
+<section class="wrap"><ul class="rows" data-mine aria-busy="true"><li class="rows__loading">${e(t("browse.loading"))}</li></ul></section>
+<section class="wrap"><div class="danger" aria-labelledby="del-h">
+  <h2 id="del-h">${e(t("mine.deleteTitle"))}</h2>
+  <p>${e(t("mine.deleteBody"))}</p>
+  <p><button type="button" class="btn btn--ghost" data-delete-open>${e(t("mine.deleteButton"))}</button></p>
+</div></section>
+<dialog class="modal" data-delete-modal aria-labelledby="del-title" aria-describedby="del-body">
+  <h2 id="del-title">${e(t("mine.deleteConfirmTitle"))}</h2>
+  <p id="del-body">${e(t("mine.deleteBody"))}</p>
+  <div class="modal__actions">
+    <button type="button" class="btn btn--danger btn--block" data-delete-confirm>${e(t("mine.deleteConfirm"))}</button>
+    <button type="button" class="btn btn--ghost btn--block" data-close>${e(t("mine.deleteCancel"))}</button>
+  </div>
+  <p class="error" role="alert" data-delete-error hidden></p>
+</dialog>
+<div class="toast" data-toast role="status" aria-live="polite" hidden></div>`,
   });
 }
 
@@ -449,7 +521,9 @@ export function adminPage(ctx: Ctx): Response {
     path: "/community/admin",
     noindex: true,
     scripts: ["/assets/js/admin.js"],
-    body: `<section class="pagehead wrap"><div class="pagehead__glow" aria-hidden="true"></div><h1 class="h1">${e(t("admin.title"))}</h1><p class="lede">${e(t("admin.lede"))}</p></section>
+    body: `<section class="pagehead wrap"><div class="pagehead__glow" aria-hidden="true"></div><h1 class="h1">${e(t("admin.title"))}</h1><p class="lede">${e(t("admin.lede"))}</p>
+  <p class="scan-note" role="note">${e(t("admin.scanAdvisory"))}</p>
+  <a class="btn btn--glass" href="/community/admin/stats">${e(t("admin.statsLink"))}</a></section>
 <section class="wrap"><div class="queue" data-queue aria-busy="true"><p class="muted">${e(t("browse.loading"))}</p></div></section>`,
   });
 }
@@ -482,11 +556,13 @@ export function privacyPage(ctx: Ctx): Response {
   <section><h2 class="h3">${e(t("privacy.adsTitle"))}</h2><p>${e(t("privacy.adsBody"))}</p>
     <ul><li><a href="https://adssettings.google.com/" rel="noopener">${e(t("privacy.adsSettings"))}</a></li><li><a href="https://policies.google.com/technologies/partner-sites" rel="noopener">${e(t("privacy.adsPartner"))}</a></li></ul>
   </section>
+  ${sec("stats")}
   ${sec("app")}
   <section><h2 class="h3">${e(t("privacy.choicesTitle"))}</h2><p>${e(t("privacy.choicesBody"))}</p>
     ${ctx.ads ? `<p><button type="button" class="btn btn--glass" data-consent-open>${e(t("foot.cookies"))}</button></p>` : ""}
   </section>
-  <section><h2 class="h3">${e(t("privacy.contactTitle"))}</h2><p>${e(t("privacy.contactBody"))} <a href="${REPO_URL}/issues" rel="noopener">GitHub</a></p></section>
+  <section><h2 class="h3">${e(t("privacy.contactTitle"))}</h2><p>${e(t("privacy.contactBody"))}</p>
+    <ul><li><a href="/community/mine">${e(t("privacy.deleteLink"))}</a></li><li><a href="${REPO_URL}/security/advisories/new" rel="noopener">${e(t("privacy.privateLink"))}</a></li></ul></section>
 </article>`;
   return page(ctx, { title: t("meta.privacyTitle"), path: "/privacy", body });
 }
@@ -503,3 +579,4 @@ export function downloadSoonPage(ctx: Ctx): Response {
 }
 
 export { jsonBlock };
+export { statsPage } from "./stats";

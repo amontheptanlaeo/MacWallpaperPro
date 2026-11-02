@@ -40,6 +40,8 @@ struct DiscoverView: View {
     @State private var search = ""
     @State private var sort = "new"
     @State private var category: CommunityCategory = .all
+    /// "Videos" chip: mutually exclusive with the categories (same as on the website)
+    @State private var videosOnly = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var selected: WallpaperSummary? { community.items.first { $0.id == selection } }
@@ -69,7 +71,8 @@ struct DiscoverView: View {
         .overlay(alignment: .bottom) { toast }
         .onChange(of: sort) { reload() }
         .onChange(of: category) { reload() }
-        .task { await community.load(query: search, sort: sort, category: category.query) }
+        .onChange(of: videosOnly) { reload() }
+        .task { await community.load(query: search, sort: sort, category: category.query, videosOnly: videosOnly) }
     }
 
     @ViewBuilder
@@ -98,12 +101,17 @@ struct DiscoverView: View {
     private var categoryChips: some View {
         FlowLayout() {
             ForEach(CommunityCategory.allCases) { c in
-                Button { withMotion(Motion.quick) { category = c } } label: {
+                Button { withMotion(Motion.quick) { category = c; videosOnly = false } } label: {
                     Label(c.title, systemImage: c.symbol)
                 }
-                .buttonStyle(ChipButtonStyle(selected: category == c))
-                .accessibilityAddTraits(category == c ? .isSelected : [])
+                .buttonStyle(ChipButtonStyle(selected: !videosOnly && category == c))
+                .accessibilityAddTraits(!videosOnly && category == c ? .isSelected : [])
             }
+            Button { withMotion(Motion.quick) { videosOnly = true; category = .all } } label: {
+                Label(tr("Videos"), systemImage: "play.rectangle.fill")
+            }
+            .buttonStyle(ChipButtonStyle(selected: videosOnly))
+            .accessibilityAddTraits(videosOnly ? .isSelected : [])
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(tr("Category"))
@@ -130,6 +138,7 @@ struct DiscoverView: View {
                     WallpaperTile(title: item.title, subtitle: tr("By %@", item.author.name),
                                   selected: showDetails && selection == item.id,
                                   active: activeID == item.id,
+                                  isVideo: item.isVideo,
                                   action: { withMotion(Motion.panel) { selection = item.id; showDetails = true } }) {
                         AsyncImage(url: community.thumbURL(item)) { phase in
                             if case .success(let img) = phase {
@@ -166,10 +175,10 @@ struct DiscoverView: View {
         }
     }
 
-    private func reload() { Task { await community.load(query: search, sort: sort, category: category.query) } }
+    private func reload() { Task { await community.load(query: search, sort: sort, category: category.query, videosOnly: videosOnly) } }
 }
 
-/// ปุ่มรับ wallpaper ในคลิกเดียว (แบบ Subscribe ของ Wallpaper Engine) — ติดตั้งแล้วใช้ทันที
+/// One-click Get button (like Wallpaper Engine's Subscribe): installs and applies right away
 struct GetButton: View {
     let item: WallpaperSummary
     @ObservedObject private var community = Community.shared
@@ -212,10 +221,11 @@ struct DiscoverDetails: View {
     let item: WallpaperSummary
     @EnvironmentObject var store: Store
     @ObservedObject private var community = Community.shared
+    @State private var info: WallpaperDetailInfo?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
-            // ตัวอย่างสดจากหน้า /preview ของเซิร์ฟเวอร์ (CSP ห้ามต่อเน็ต) — ยังไม่ต้องติดตั้ง
+            // Live preview from the server's /preview page (its CSP blocks the network); nothing is installed yet
             WebWallpaper(source: .url(community.baseURL.appendingPathComponent("preview/\(item.id)")),
                          params: "{}", isDesktop: false, offline: false)
                 .id(item.id)
@@ -233,7 +243,12 @@ struct DiscoverDetails: View {
             primaryAction
         }
 
-        DetailGroup(title: tr("Info")) {
+        DetailGroup(title: tr("Info"), footer: item.isVideo ? tr("Plays muted and looped.") : nil) {
+            if item.isVideo {
+                infoRow(tr("Type"), tr("Video"))
+                if let credit = info?.credit, !credit.isEmpty { infoRow(tr("Credit"), credit) }
+                if let license = info?.license, !license.isEmpty { infoRow(tr("License"), license) }
+            }
             if let c = item.category.flatMap(CommunityCategory.init(rawValue:)) {
                 infoRow(tr("Category"), c.title)
             }
@@ -241,6 +256,14 @@ struct DiscoverDetails: View {
             if !item.tags.isEmpty { infoRow(tr("Tags"), item.tags.joined(separator: ", ")) }
             Button(tr("View on the web")) { NSWorkspace.shared.open(community.webPage(for: item.id)) }
                 .buttonStyle(SecondaryButtonStyle(fullWidth: true))
+            if item.isVideo, let s = info?.sourceUrl, let u = URL(string: s), ["https", "http"].contains(u.scheme ?? "") {
+                Button(tr("View source")) { NSWorkspace.shared.open(u) }
+                    .buttonStyle(SecondaryButtonStyle(fullWidth: true))
+            }
+        }
+        .task(id: item.id) {
+            info = nil
+            if item.isVideo { info = await community.detailInfo(id: item.id) }
         }
 
         DetailGroup(title: tr("Security")) {

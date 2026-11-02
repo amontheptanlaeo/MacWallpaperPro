@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Least privilege: the jobs only read the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Website (i18n, typecheck, tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run check:i18n
+      - run: npm run typecheck
+      # No secrets in CI: the tests generate an ephemeral Ed25519 signing key (vitest.config.ts).
+      - run: npx vitest run
+        env:
+          CI: "1"
+
+  app:
+    name: macOS app (swift build, localization)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check localization keys
+        run: python3 scripts/check-localization.py
+      - name: Swift version
+        run: swift --version
+      - name: Build
+        run: swift build

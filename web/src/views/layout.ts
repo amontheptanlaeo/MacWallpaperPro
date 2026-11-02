@@ -5,6 +5,9 @@ import { clientDict, LANGUAGES, pickLanguage, readCookie, translator, type Langu
 import { GITHUB_LOGO, icon, LOGO } from "./icons";
 
 export const REPO_URL = "https://github.com/amontheptanlaeo/MacWallpaperPro";
+/** Optional donations. Plain outbound links (no scripts, no widgets), so the CSP needs no change. */
+export const SPONSORS_URL = "https://github.com/sponsors/amontheptanlaeo";
+export const KOFI_URL = "https://ko-fi.com/amontheptanlaeo";
 export const CONSENT_COOKIE = "mwp_consent";
 
 export interface Ctx {
@@ -106,6 +109,7 @@ function footer(ctx: Ctx, extra: string): string {
       <a href="/download">${e(t("nav.download"))}</a>
       <a href="${REPO_URL}" rel="noopener">${GITHUB_LOGO}<span>${e(t("nav.github"))}</span></a>
       <a href="/privacy">${e(t("foot.privacy"))}</a>
+      <a href="/#support">${e(t("foot.support"))}</a>
       ${consentLink}
     </nav>
     <p class="foot__fine">${e(t("foot.license"))}. ${e(t("foot.trademark"))}</p>

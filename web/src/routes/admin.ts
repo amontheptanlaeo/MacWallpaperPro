@@ -1,12 +1,13 @@
 import { requireAdmin } from "../lib/auth";
 import { HttpError, json, readJson } from "../lib/http";
+import { githubCounts, parseDays, statsReport } from "../lib/stats";
 import { parseScan, toDetail, WP_SELECT, type WallpaperRow } from "../lib/wallpapers";
 
 export async function queue(request: Request, env: Env): Promise<Response> {
   await requireAdmin(request, env);
   const { results } = await env.DB.prepare(
     `SELECT w.*, u.display_name AS author_name, u.email AS author_email FROM wallpapers w JOIN users u ON u.id = w.owner_id
-     WHERE w.status = 'pending' ORDER BY w.created_at ASC LIMIT 200`,
+     WHERE w.status = 'pending' AND w.draft = 0 ORDER BY w.created_at ASC LIMIT 200`,
   ).all<WallpaperRow & { author_email: string }>();
   return json({
     items: results.map((r) => ({
@@ -28,6 +29,7 @@ export async function review(request: Request, env: Env, id: string, action: "ap
   }
   const row = await env.DB.prepare(`${WP_SELECT} WHERE w.id = ?`).bind(id).first<WallpaperRow>();
   if (!row) throw new HttpError(404, "not_found", "Wallpaper not found.");
+  if (row.draft) throw new HttpError(409, "not_ready", "The video hasn't been uploaded yet.");
   const now = new Date().toISOString();
   await env.DB.prepare(
     "UPDATE wallpapers SET status = ?, reject_reason = ?, reviewed_at = ?, reviewed_by = ?, updated_at = ? WHERE id = ?",
@@ -35,4 +37,12 @@ export async function review(request: Request, env: Env, id: string, action: "ap
     .bind(action === "approve" ? "approved" : "rejected", reason, now, user.id, now, id)
     .run();
   return json({ id, status: action === "approve" ? "approved" : "rejected" });
+}
+
+/** GET /api/admin/stats?days=30 — aggregated, anonymous counts (admins only). */
+export async function stats(request: Request, env: Env): Promise<Response> {
+  await requireAdmin(request, env);
+  const days = parseDays(new URL(request.url).searchParams.get("days"));
+  const [report, github] = await Promise.all([statsReport(env, days), githubCounts()]);
+  return json({ ...report, github });
 }

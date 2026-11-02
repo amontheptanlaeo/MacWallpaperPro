@@ -7,7 +7,8 @@ Google AdSense; the app never shows ads.
 
 - Runtime: one Cloudflare Worker (TypeScript) + static assets, D1 (SQLite), R2 (private bucket)
 - Pages are rendered by the Worker in 17 languages (`public/i18n/<code>.json`)
-- Production: `https://macwallpaper.elizos.com` (Workers custom domain on the `elizos.com` zone)
+- Production (live): <https://macwallpaper.elizos.com> (Workers custom domain on the `elizos.com` zone).
+  The root domain `elizos.com` / `www.elizos.com` is routed to the same Worker and forwarded (see below)
 - Contracts with the macOS app: [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)
 
 ## Local development
@@ -16,8 +17,8 @@ Google AdSense; the app never shows ads.
 cd web
 npm install
 cp .dev.vars.example .dev.vars        # then paste the signing key into SIGNING_KEY_PKCS8
-npm run db:reset                      # wipe .wrangler/state and apply migrations/0001_init.sql
-npm run seed                          # import every ../Wallpapers/<slug>/ as an approved wallpaper
+npm run db:reset                      # wipe .wrangler/state and apply migrations/ (0001_init, 0002_video, 0003_stats)
+npm run seed                          # import ../Wallpapers/<slug>/ (HTML) and ../Wallpapers-video/<slug>/ (video)
 npm run dev                           # http://localhost:8787
 ```
 
@@ -37,6 +38,8 @@ Tests and checks:
 
 ```sh
 npm test            # i18n key check + vitest (Workers runtime, local D1/R2, mocked OAuth providers)
+                    # signs with ../secrets/signing-private-pkcs8.b64 when present, otherwise with an
+                    # ephemeral Ed25519 key (CI, forks); MWP_TEST_EPHEMERAL_KEY=1 forces the latter
 npm run check:i18n  # every language has every key, same {placeholders}
 npm run typecheck
 ```
@@ -45,6 +48,12 @@ npm run typecheck
 
 `scripts/seed.mjs` imports every folder in `../Wallpapers/` that has `index.html` and
 `wallpaper.json` (`{ id, title, description, tags[], category }`; Nebula has built-in metadata).
+It also imports every folder in `../Wallpapers-video/` that has `video.mp4` (MP4/MOV with an `ftyp`
+box, ≤ 60 MB), `thumb.jpg` (≤ 2 MB) and `wallpaper.json` with `kind: "video"`, `credit`, `license`
+and optionally `sourceUrl`. The video SHA-256 is computed in Node; the bytes go to R2 at
+`wallpapers/<id>/v1/video.mp4`. Folders that fail a check are skipped with a warning.
+`--video-dir=/path` reads videos from another folder (handy for a small local test clip). The seed
+needs `migrations/0002_video.sql` applied first.
 A missing `thumb.jpg` is rendered with headless Chrome (1600×1000) into
 `scripts/seed-assets/thumbs/` (cached; `--rerender` to refresh). It is safe to re-run: rows are
 upserted by id (download counts are kept) and files are overwritten.
@@ -63,7 +72,8 @@ npm run seed:remote          # PRODUCTION D1 + R2; asks you to type "seed produc
 | `GITHUB_CLIENT_SECRET` | **secret** | GitHub OAuth client secret (optional; enables "Continue with GitHub") |
 | `GOOGLE_CLIENT_ID` | var | Google OAuth client id |
 | `GITHUB_CLIENT_ID` | var | GitHub OAuth client id (production value is in `wrangler.jsonc`) |
-| `ADMIN_EMAILS` | var | Comma-separated verified emails that become moderators |
+| `ADMIN_EMAILS` | **secret** | Comma-separated verified emails that are moderators. Set it with `npx wrangler secret put ADMIN_EMAILS` (or as an encrypted variable in the dashboard), **never in `wrangler.jsonc`**: that file is public and would publish the moderators' addresses. It is the only source of admin rights: the role is re-checked on every request and sign-in, so removing an address demotes that account immediately (see "Revoking a moderator") |
+| `DOWNLOAD_SALT` | **secret** (optional) | Salt for the once-per-day download dedupe hash. Any long random string (`openssl rand -base64 32`). When unset, a salt derived from `SIGNING_KEY_PKCS8` is used. Changing it only resets today's dedupe |
 | `ENVIRONMENT` | var | `production` in `wrangler.jsonc`. `development` (only in `.dev.vars`) enables the dev sign-in |
 | `SITE_URL` | var | Canonical origin for `<link rel=canonical>`, Open Graph, sitemap, robots |
 | `ALLOWED_ORIGINS` | var | Extra Origins allowed on POST (normally empty) |
@@ -71,6 +81,29 @@ npm run seed:remote          # PRODUCTION D1 + R2; asks you to type "seed produc
 | `ADSENSE_SLOT_BROWSE` / `_DETAIL` / `_FOOTER` | var | Numeric ad unit ids. A page only becomes an "ad page" when its slot is set |
 
 Bindings: `DB` (D1 `macwallpaperpro`), `BUCKET` (R2 `macwallpaperpro-files`, private), `ASSETS`.
+The D1 `database_id` in `wrangler.jsonc` is the real production id (D1 ids are not secret).
+
+### Revoking a moderator
+
+Remove the address from the `ADMIN_EMAILS` secret (`npx wrangler secret put ADMIN_EMAILS` with the
+new list). The next request from that account is treated as a normal user and the cached
+`users.role` is rewritten to `user`. To also end their sessions right away:
+
+```sh
+npx wrangler d1 execute DB --remote --command "DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = 'former-mod@example.com')"
+```
+
+## Root domain forwarding (`elizos.com`)
+
+`elizos.com` and `www.elizos.com` are Workers custom domains of this same Worker (`routes` in
+`wrangler.jsonc`). On those hosts the Worker:
+
+- answers `/ads.txt` itself (generated from `ADSENSE_CLIENT`), because AdSense reads it on the root domain;
+- serves a tiny verification page at `/` (AdSense site-verification meta + canonical link + instant
+  refresh to the site), so AdSense can verify the root domain;
+- answers every other path with a `301` to the same path and query on `SITE_URL`. The target is
+  built from the site origin with the path set separately, so `//evil.example` or `/%2F%2Fevil.example`
+  can never redirect to another host (`test/apex.test.ts`).
 
 ## Creating the OAuth apps
 
@@ -84,7 +117,7 @@ The Worker builds the callback URL from the request origin, so register one URL 
 3. **Homepage URL**: `https://macwallpaper.elizos.com`
 4. **Authorization callback URL**: `https://macwallpaper.elizos.com/auth/github/callback`
 5. Leave **Enable Device Flow** off. Click **Register application**.
-6. Copy the **Client ID** into `GITHUB_CLIENT_ID` (`wrangler.jsonc` → `vars`).
+6. Copy the **Client ID** into `GITHUB_CLIENT_ID` (`wrangler.jsonc` → `vars`; client ids are public).
 7. **Generate a new client secret**, then: `npx wrangler secret put GITHUB_CLIENT_SECRET`
 8. For local testing, create a second OAuth app with callback
    `http://localhost:8787/auth/github/callback` and put its id/secret in `.dev.vars`
@@ -129,20 +162,84 @@ email, so the same person can use Google or GitHub.
    AdSense → **Privacy & messaging → European regulations message** (Google's own free CMP),
    which loads from `fundingchoicesmessages.google.com` (already allowed by the ad-page CSP).
 
-## Deploying (owner runs this; nothing here has been deployed)
+## Video wallpapers: deploy order
+
+The video feature added `0002_video.sql` and is backward compatible with installed apps:
+
+```sh
+cd web
+npx wrangler d1 migrations apply DB --remote   # 1) applies 0002_video.sql (and 0003_stats.sql) — additive only
+npx wrangler deploy                            # 2) the new Worker needs the new columns
+npm run seed:remote                            # 3) optional: imports ../Wallpapers-video/ (and re-upserts HTML)
+```
+
+Run the migration **before** deploying: the old Worker keeps working with the extra columns
+(it selects `w.*` and inserts named columns), but the new Worker needs them. Then ship the app
+build that understands manifest v2. Older app builds never list videos (see the legacy-app rule in
+`docs/ARCHITECTURE.md`) and keep installing HTML wallpapers exactly as before.
+
+## Deploying
+
+The site is live at <https://macwallpaper.elizos.com>. These are the steps for a fresh deployment
+(or a fork). Only the owner deploys.
 
 ```sh
 npx wrangler login
-npx wrangler d1 create macwallpaperpro          # paste the database_id into wrangler.jsonc
+npx wrangler d1 create macwallpaperpro          # fresh setup only: put the database_id into wrangler.jsonc
 npx wrangler r2 bucket create macwallpaperpro-files   # keep it private (no public access, no r2.dev)
-npx wrangler d1 migrations apply DB --remote
+npx wrangler d1 migrations apply DB --remote      # applies every pending file in migrations/, in order
 npx wrangler secret put SIGNING_KEY_PKCS8         # contents of ../secrets/signing-private-pkcs8.b64
-npx wrangler secret put GITHUB_CLIENT_SECRET      # already uploaded for macwallpaperpro-web
+npx wrangler secret put ADMIN_EMAILS              # moderators (a secret, never a var in wrangler.jsonc)
+npx wrangler secret put DOWNLOAD_SALT             # optional, see Environment
+npx wrangler secret put GITHUB_CLIENT_SECRET
 npx wrangler secret put GOOGLE_CLIENT_SECRET      # if Google sign-in is wanted
-# edit wrangler.jsonc vars: ADMIN_EMAILS, GOOGLE_CLIENT_ID, ADSENSE_* (when approved)
-npx wrangler deploy                               # attaches macwallpaper.elizos.com (custom domain)
+# edit wrangler.jsonc vars only for public values: GOOGLE_CLIENT_ID, GITHUB_CLIENT_ID, ADSENSE_*
+npx wrangler deploy                               # attaches macwallpaper.elizos.com, elizos.com, www.elizos.com
 npm run seed:remote                               # import the bundled wallpapers
 ```
+
+### Updating production (migrations first)
+
+Always apply new migrations **before** deploying the Worker that needs them. Every migration is
+additive, so the old Worker keeps working while the new tables or columns exist.
+
+```sh
+cd web
+npx wrangler d1 migrations apply DB --remote   # 0002_video.sql, then 0003_stats.sql (whatever is pending)
+npx wrangler secret put ADMIN_EMAILS           # once, if ADMIN_EMAILS was ever a plain var: also delete
+                                               # that var in the dashboard so only the secret remains
+npx wrangler deploy
+```
+
+## Statistics (`/community/admin/stats`)
+
+Moderators see anonymous download statistics at `/community/admin/stats` (7, 30 or 90 days; linked
+from the moderation queue) and as JSON at `GET /api/admin/stats?days=30`. Both are admin only.
+
+What is recorded (`migrations/0003_stats.sql`, `src/lib/stats.ts`):
+
+| Event | When |
+|---|---|
+| `app_download` | `GET /download` (still a 302 to GitHub Releases), at most once per visitor per UTC day |
+| `wallpaper_install` | a counted wallpaper download (`/api/wallpapers/:id/download`, not `Range` requests), at most once per visitor, wallpaper and day. The same dedupe drives the public `downloads` count |
+| `page_view` | the landing page, `/community` and wallpaper detail pages, only for real page loads (`Sec-Fetch-Dest: document` + `Sec-Fetch-Mode: navigate`, not prefetch, HEAD or obvious crawlers). Not deduped |
+
+Each event only increments an aggregate row `(day, event, wallpaper_id, country, ref, utm) → count`
+(`INSERT … ON CONFLICT DO UPDATE SET count = count + 1`):
+
+- `country`: `request.cf.country`, `XX` when unknown.
+- `ref`: the referrer **host only**, lowercased, without `www.`/`m.`/`mobile.` (`tiktok.com`, `t.co`,
+  `reddit.com`); `(direct)` when there is none (the app, typed URLs), `(internal)` for this site.
+- `utm`: `utm_source` from the URL, or from a same-site referrer (so `/?utm_source=tiktok` → Download
+  is attributed), lowercased, `[a-z0-9_-]`, at most 32 characters.
+
+No IP address, user agent, cookie or per-person row is stored. The once-per-day dedupe keeps
+`SHA-256(salt, day, ip, target)` in `download_seen`; rows older than yesterday are pruned. Every
+write is a single D1 batch inside `ctx.waitUntil`, so responses never wait for it.
+
+The page also shows GitHub's own release download count (direct downloads that skip `/download`),
+fetched from `api.github.com/repos/amontheptanlaeo/MacWallpaperPro/releases` and cached for 10
+minutes with the Cache API. The privacy page describes all of this in every language.
 
 ## Cloudflare Workers free plan
 
@@ -156,9 +253,20 @@ The free plan allows 100k requests/day and ~10 ms CPU per request. The design ke
   only when a non-secret `mwp_user=1` hint cookie exists.
 - **Manifests**: one Ed25519 signature (~0.1 ms); the imported key is cached per isolate.
 - **Pages**: string templates (no framework, no HTMLRewriter), 1–4 indexed D1 queries.
+- **Statistics**: one SHA-256 of a short string and one D1 batch per counted request, run in
+  `ctx.waitUntil` after the response; page views are a single upsert.
 - **Static files** (CSS, JS, fonts, i18n JSON) are served by the assets layer without invoking the
   Worker (`run_worker_first` excludes `/assets/*` and `/i18n/*`), so they don't count as Worker requests.
-- **Uploads** are the heaviest path: multipart parsing, SHA-256 and a **single-pass** combined
+- **Video uploads never touch the CPU budget**: a small multipart POST creates a draft (metadata +
+  thumbnail), then `PUT /api/uploads/:id/video` streams the raw bytes straight into R2 through a
+  `FixedLengthStream`. The browser computes the SHA-256 (`crypto.subtle.digest`) and sends it in
+  `X-Content-SHA256`; R2 verifies it (`put(…, { sha256 })`) and rejects mismatches. The Worker only
+  peeks at the first chunk (the MP4 `ftyp` box). Requests up to 100 MB are allowed on the free plan;
+  the limit is 60 MB.
+- **Video downloads** stream from R2 with `Range` support (206), so `<video>` previews can seek.
+  Range requests are not counted as downloads. Hover previews on the site load nothing until hover
+  (`preload="none"`) and are browser-cacheable for an hour.
+- **Uploads** (HTML) are the heaviest path: multipart parsing, SHA-256 and a **single-pass** combined
   scanner regex over the HTML. Typical wallpapers (20–500 KB) take a few ms. An index.html close
   to the 10 MB limit can exceed the free plan's CPU budget; if creators hit that, upgrade to the
   $5 Workers Paid plan or lower `MAX_HTML_BYTES`.
