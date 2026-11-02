@@ -1,13 +1,19 @@
 #!/usr/bin/env node
-// Generates the voiceover tracks for the MacWallpaperPro promo videos with Gemini TTS.
+// Generates the voiceover WAV files for the MacWallpaperPro promo videos with Gemini TTS.
 //
-//   node marketing/make-voiceover.mjs [--voice Sulafat] [--only teaser-en,teaser-th,showcase-en] [--out DIR]
+// IMPORTANT: this script ONLY writes WAV files. It does not touch the videos. The .mp4 files in
+// marketing/ were rendered by a separate pipeline (frame capture + mix + mux, see README.md,
+// "Re-rendering the videos"), so a new WAV has no effect until that step is run.
+//
+//   node marketing/make-voiceover.mjs [--voice Sulafat] [--only teaser-en,teaser-th,showcase-en]
+//                                     [--model gemini-2.5-flash-preview-tts] [--out DIR]
 //
 // The API key is read from secrets/gemini.key (git-ignored) or $GEMINI_API_KEY. It is never printed.
 // One request per script; each script's lines are separated by <long pause> markers so the
 // render step can split the audio back into lines with ffmpeg silencedetect.
-// Output: <out>/<id>-<voice>.wav (default .build/vo-cache, git-ignored) (24 kHz mono 16-bit). Existing files are reused (cache), so
-// re-running costs no requests unless you delete them.
+// Output: <out>/<id>-<voice>.wav, 24 kHz mono 16-bit (default out: .build/vo-cache, git-ignored).
+// Existing files are reused (cache), so re-running costs no requests unless you delete them.
+// Default model order: gemini-3.8-flash-tts, then gemini-2.5-flash-preview-tts (free tier: ~10 requests/day each).
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -17,7 +23,7 @@ const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? proces
 const VOICE = arg('--voice', 'Sulafat');
 const OUT = resolve(arg('--out', join(here, '..', '.build', 'vo-cache'))); // .build/ is git-ignored
 const ONLY = arg('--only', '')?.split(',').filter(Boolean);
-const MODELS = ['gemini-3.8-flash-tts', 'gemini-2.5-flash-preview-tts'];
+const MODELS = arg('--model', '') ? [arg('--model')] : ['gemini-3.8-flash-tts', 'gemini-2.5-flash-preview-tts'];
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
 const KEY = isMain ? (process.env.GEMINI_API_KEY || readFileSync(join(here, '..', 'secrets', 'gemini.key'), 'utf8').trim()) : '';
 
@@ -53,7 +59,7 @@ export const SCRIPTS = {
       'This is your Mac... but alive.',
       'MacWallpaperPro brings live wallpapers to macOS, and they react to your cursor.',
       'Koi follow you around. A click sets off fireworks, ripples, and shooting stars.',
-      'Pick from nineteen free wallpapers in the Community store, and install any of them in one click.',
+      'Browse free interactive and video wallpapers in the Community store, and install any of them in one click.',
       'Plus a desktop clock, glowing window borders, window snapping, and menu bar tools.',
       'Community wallpapers run offline in a sandbox, and every file is signature-verified.',
       'Free, open source, no account. Get it at macwallpaper dot elizos dot com.',

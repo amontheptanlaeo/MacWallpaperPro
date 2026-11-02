@@ -14,7 +14,7 @@ All videos are H.264 High at 30 fps with `yuv420p` and `+faststart`.
 |---|---|---|---|---|
 | `teaser-9x16.mp4` | 1080×1920, 35 MB | 23.9 s | English voiceover, −16 LUFS | TikTok, Instagram Reels, YouTube Shorts |
 | `teaser-9x16-th.mp4` | 1080×1920, 35 MB | 24.4 s | Thai voiceover, −16 LUFS | Thai TikTok, Reels, Facebook |
-| `showcase-16x9.mp4` | 1920×1080, 27 MB | 41.3 s | English voiceover, −16 LUFS | X, YouTube, LinkedIn, Product Hunt |
+| `showcase-16x9.mp4` | 1920×1080, 27 MB | 42.4 s | English voiceover, −16 LUFS | X, YouTube, LinkedIn, Product Hunt |
 | `square-1x1.mp4` | 1080×1080, 6.9 MB | 13.6 s (seamless loop) | none | Instagram / Facebook feed |
 
 - **Teaser:** quick eased cuts across 8 wallpapers: Sakura Breeze, Koi Pond, Pixel Town (click fireworks), Moon Rabbit Night (shooting stars), Perpetual Ocean (video wallpaper), Neon Skyline (lightning), Event Horizon (shockwave) and Bunny Meadow. It ends on an icon / name / URL card. Captions match the voiceover. All text stays above the bottom 20% of the frame.
@@ -46,6 +46,18 @@ The stories keep their text out of the top 250 px and the bottom 340 px, where t
 
 - `CAPTIONS.md`: the post copy for X/Threads, Instagram/TikTok, LinkedIn/Facebook, Product Hunt, Reddit r/macapps and YouTube, in English, Thai, Japanese and Spanish. It also has the UTM link table and a "Voiceover scripts" section.
 - `make-voiceover.mjs`: regenerates the voiceover with Gemini TTS. Run `node marketing/make-voiceover.mjs --voice Sulafat`. It reads `secrets/gemini.key`, never prints the key, and caches its output in the git-ignored `.build/vo-cache/`. The free tier allows about 10 requests per day for `gemini-3.8-flash-tts`.
+
+## Re-rendering the videos (separate from the voiceover)
+
+`make-voiceover.mjs` **only writes WAV files**, to `.build/vo-cache/` by default. It never changes the `.mp4` files in this folder. Running it on its own changes nothing in the videos.
+
+The videos were built by a render pipeline that lives outside the repo, in the session scratchpad (`mk/`: `capture.mjs`, `vo.mjs`, `build.mjs`, `render.mjs` and the `teaser/showcase/square.html` compositions). Updating a video takes three steps:
+
+1. **Capture clips.** Headless Chrome renders each wallpaper with a scripted cursor and writes JPG frames plus a cursor path (`node capture.mjs jobs.json`). Video wallpapers are extracted with ffmpeg instead.
+2. **Mix the voiceover.** `vo.mjs` splits the WAV into lines with `silencedetect`, places each line at its cue time with a light `atempo`, and loudness-normalizes the result to −16 LUFS (two-pass `loudnorm`). The caption timings come from the same placement.
+3. **Render and mux.** `node build.mjs teaser-en|teaser-th|showcase-en` runs the mix, renders the frames in Chrome, closes Chrome, encodes with one ffmpeg process (`-threads 2`), and muxes in the audio.
+
+To change a voiceover line, edit `SCRIPTS` in `make-voiceover.mjs`, generate the WAV, update the matching caption text in `build.mjs`, and run step 3. Step 1 is needed only if the frame dumps were deleted. If that pipeline isn't available, ask for it to be rebuilt. Swapping the audio into an existing mp4 by hand will leave the burned-in captions out of sync.
 
 ## Tracking links
 
@@ -80,6 +92,6 @@ After the first week, re-cut posts around single wallpapers (for example koi, sa
 
 ## Known limitations
 
-- The showcase voiceover says "nineteen free wallpapers", which counts the interactive ones only. The visuals and the feature cards show video wallpapers. A re-take that names video wallpapers ran into the Gemini free-tier daily quota. Re-run `make-voiceover.mjs` with the alternative line from `CAPTIONS.md` to replace it.
+- The teaser voiceovers come from `gemini-3.8-flash-tts`. The showcase voiceover comes from the fallback `gemini-2.5-flash-preview-tts`, with the same voice name (Sulafat), so its timbre may differ slightly between the videos.
 - The app window in the showcase is a still screenshot. The Get → spinner → "In library" button states are drawn on top of it, so they're a faithful mock of the real flow rather than a capture of it.
 - The clock in the desktop mockup reads a fixed "9:41 AM".

@@ -354,19 +354,19 @@ Delivery: warm, relaxed and modern; a friendly young narrator, quietly delighted
 
 ### Showcase 16:9, English (`showcase-16x9.mp4`, about 42 s)
 
-Delivery: warm, calm and modern; a friendly narrator for a design-led product film.
+Delivery: warm, calm and modern; a friendly narrator for a design-led product film. (Recorded with `gemini-2.5-flash-preview-tts`.)
 
 | Cue | Voiceover / caption |
 |---|---|
 | 0:01 sakura desktop | This is your Mac… but alive. |
 | 0:04 → koi | MacWallpaperPro brings live wallpapers to macOS, and they react to your cursor. |
 | 0:09 koi → pixel town → aurora → moon rabbit | Koi follow you around. A click sets off fireworks, ripples, and shooting stars. |
-| 0:16 app window, one-click install | Pick from nineteen free wallpapers in the Community store, and install any of them in one click. |
+| 0:16 app window, one-click install → video wallpaper applied | Browse free interactive and video wallpapers in the Community store, and install any of them in one click. |
 | 0:23 feature cards | Plus a desktop clock, glowing window borders, window snapping, and menu bar tools. |
 | 0:29 privacy cards highlighted | Community wallpapers run offline in a sandbox, and every file is signature-verified. |
 | 0:35 CTA card | Free, open source, no account. Get it at macwallpaper dot elizos dot com. |
 
-The showcase voiceover still says "nineteen free wallpapers" (the 19 interactive ones). The free-tier daily quota ran out before a take mentioning video wallpapers could be recorded. The showcase visuals cover video wallpapers instead: you install a video wallpaper, a "Video wallpaper" chip appears, and there's a feature card. To re-record with the line "Browse free interactive and video wallpapers in the Community store, and install any of them in one click.", edit `SCRIPTS['showcase-en']` and run the script again.
+The showcase take was recorded with the fallback model `gemini-2.5-flash-preview-tts` (same voice, Sulafat), because the 3.8 model's daily quota had run out. It plays at `atempo` 1.12, which brings it to about 42 s.
 
 ### Square 1:1 (`square-1x1.mp4`)
 
