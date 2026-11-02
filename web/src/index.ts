@@ -94,7 +94,13 @@ function apexResponse(request: Request, env: Env): Response | null {
     const body = adsTxt(env);
     return new Response(body ?? "", { status: body ? 200 : 404, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=3600" } });
   }
-  const target = new URL(url.pathname + url.search, site).toString();
+  // build from the site's origin and set path/query separately — a "//host" path must never
+  // become a different host (open redirect)
+  const dest = new URL(site.origin);
+  dest.pathname = "/" + url.pathname.replace(/^\/+/, "");
+  dest.search = url.search;
+  if (dest.origin !== site.origin) return Response.redirect(site.origin + "/", 301);
+  const target = dest.toString();
   if (url.pathname === "/" && request.method === "GET") {
     const t = escapeHtml(target);
     return new Response(

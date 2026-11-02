@@ -30,6 +30,14 @@ describe("root domain (elizos.com)", () => {
     expect(res.headers.get("Location")).toBe("https://macwallpaper.elizos.com/community?cat=cute");
   });
 
+  it("never redirects to another host (//host paths)", async () => {
+    for (const path of ["//example.org", "//example.org/x?y=1", "///example.org", "/\\example.org"]) {
+      const res = await get("https://elizos.com" + path);
+      expect(res.status).toBe(301);
+      expect(new URL(res.headers.get("Location")!).origin).toBe("https://macwallpaper.elizos.com");
+    }
+  });
+
   it("leaves the main site alone", async () => {
     const res = await get("https://macwallpaper.elizos.com/ads.txt");
     expect(res.status).toBe(200);
