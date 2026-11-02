@@ -1,39 +1,84 @@
-# MacWallpaperPro
+<p align="center">
+  <img src="Resources/AppIcon-1024.png" width="128" alt="MacWallpaperPro icon">
+</p>
 
-แอปแต่ง macOS เอง: ภาพพื้นหลังเคลื่อนไหวที่ตอบสนองต่อเมาส์, นาฬิกาบนเดสก์ท็อป, ออกจากแอปเมื่อปิดหน้าต่างสุดท้าย, ภาพหน้าจอล็อก (ต้องใช้ macOS 15 ขึ้นไป)
+<h1 align="center">MacWallpaperPro</h1>
 
-## Build & Run
+<p align="center">
+  Live, interactive wallpapers for macOS — free and open source.<br>
+  <a href="https://macwallpaper.elizos.com">Website & Community</a> ·
+  <a href="https://macwallpaper.elizos.com/download">Download</a> ·
+  <a href="SECURITY.md">Security</a>
+</p>
+
+---
+
+MacWallpaperPro turns your desktop into something alive. Wallpapers react to your cursor — petals drift in the wind you make, koi follow your pointer, clicks send ripples across a lake. Pick one from the free Community store and it's on your desktop in one click.
+
+## Features
+
+- **Interactive live wallpapers** — WebGL/Canvas scenes that respond to mouse movement and clicks, plus video and web-page wallpapers
+- **Free Community store** — 19+ wallpapers (nature, cute & pastel, cartoon, sci-fi, space), one-click install, no account needed
+- **Safe by design** — every Community file is reviewed, Ed25519-signed and SHA-256 verified; wallpapers run offline in a sandbox with all network access blocked
+- **Desktop clock** — font, color, size and position of your choice
+- **Window tools** — glowing border around the focused window, keyboard window snapping (halves, quarters, maximize, next display)
+- **Menu bar** — hide cluttered icons behind one button, or replace the bar with a custom one
+- **Auto-quit** — quit apps when their last window closes
+- **Lock screen** — use the current wallpaper frame as your lock screen image
+- **17 languages** with live switching, including right-to-left Arabic
+
+Requires **macOS 15 or later**.
+
+## Build from source
 
 ```bash
-./build.sh
+./build.sh                    # builds build/MacWallpaperPro.app
 open build/MacWallpaperPro.app
 ```
 
-ไอคอน 🎨 บน menu bar → ตั้งค่า / เปิด-ปิดแต่ละฟีเจอร์
+`build.sh` signs with your *Developer ID Application* certificate if one is installed (so Accessibility permission survives rebuilds), otherwise ad-hoc.
 
-## โครงสร้าง
+To produce a notarized, distributable build:
 
-| ไฟล์ | หน้าที่ |
+```bash
+./release.sh 1.0.0            # build → sign → notarize → staple → dist/MacWallpaperPro-1.0.0.zip
+./release.sh 1.0.0 --no-notarize
+```
+
+Regenerate the app icon with `swift scripts/make-icon.swift`.
+
+## Project layout
+
+| Path | What it is |
 |---|---|
-| `Model.swift` | `Config` (บันทึกใน UserDefaults) |
-| `Shaders.swift` | WebGL shader presets + template สำหรับ shader ที่เขียนเอง |
-| `Wallpaper.swift` | หน้าต่างระดับ desktop ต่อจอ: shader / วิดีโอ / เว็บ + นาฬิกา + ส่งเคอร์เซอร์เข้าหน้าเว็บ |
-| `Wallpapers/nebula/index.html` | wallpaper เริ่มต้น (Nebula Flow) — เปิดในเบราว์เซอร์เพื่อแก้ได้ |
-| `TrueQuit.swift` | AXObserver เฝ้า window ทุกแอป → quit เมื่อไม่เหลือหน้าต่าง |
-| `SettingsView.swift` | หน้าตั้งค่าแบบ System Settings |
+| `Sources/MacWallpaperPro/` | The macOS app (Swift/SwiftUI) |
+| ├ `Wallpaper.swift` | Desktop-level wallpaper windows, cursor forwarding into web wallpapers, clock |
+| ├ `Community.swift` | Community client, signed installs, offline sandbox rules |
+| ├ `LibraryView.swift`, `DiscoverView.swift`, `MainWindow.swift`, `SettingsPages.swift`, `DesignSystem.swift` | UI |
+| ├ `WindowBorder.swift`, `WindowSnap.swift`, `MenuBarHider.swift`, `CustomMenuBar.swift`, `TrueQuit.swift` | Desktop tools |
+| └ `I18n.swift` | Localization (tables in `Localization/*.json`) |
+| `Wallpapers/` | Built-in and launch Community wallpapers (one self-contained `index.html` each) |
+| `web/` | Website, Community store and API — Cloudflare Worker + D1 + R2 ([web/README.md](web/README.md)) |
+| `docs/ARCHITECTURE.md` | App ↔ server contract, security model, manifest signing |
+| `design-system/MASTER.md` | UI design rules for the app |
 
-## หมายเหตุ
+## Making your own wallpaper
 
-- **ปิดแอปจริง** ต้องให้สิทธิ์ Accessibility; build ใหม่แต่ละครั้ง (ad-hoc sign) อาจต้องลบแล้วให้สิทธิ์ใหม่
-- **Wallpaper HTML ของตัวเอง**: ฟัง `mousemove` / `mousedown` / `click` ตามปกติ — MacWallpaperPro ส่ง event จากเคอร์เซอร์จริงให้ (คลิกส่งเฉพาะเมื่อคลิกบน Desktop) และเรียก `window.setP({c1,c2,c3,speed})` เมื่อเปลี่ยนสีในหน้าตั้งค่า
+A wallpaper is a single self-contained `index.html` (≤ 10 MB, no external requests). It receives standard DOM events — `mousemove`, `mousedown`, `mouseup`, `click` — from the real cursor (clicks only when they land on the desktop). Optionally define `window.setP = ({ speed }) => …` to follow the app's speed setting. Submit it at [macwallpaper.elizos.com/community/upload](https://macwallpaper.elizos.com/community/upload).
+
+## Localization
+
+App strings live in `Localization/<code>.json` (English keys → translation); website strings in `web/public/i18n/<code>.json`. Corrections and new languages are welcome via pull request.
 
 ## License
 
-MacWallpaperPro เป็น open source ภายใต้ [GNU General Public License v3.0](LICENSE)
+MacWallpaperPro is open source under the [GNU General Public License v3.0](LICENSE).
 
-- ใช้งาน แก้ไข และแจกต่อได้ฟรี รวมถึงใช้ในเชิงพาณิชย์
-- ถ้าแจกต่อ (ทั้งแบบแก้ไขหรือไม่แก้ไข) ต้องเปิด source code ภายใต้ GPL-3.0 เหมือนกัน และคงไฟล์ [`NOTICE`](NOTICE) กับ credit "MacWallpaperPro by Amonthep tanlaeo" ไว้
-- ชื่อ **MacWallpaperPro** และโลโก้เป็นของผู้สร้าง ไม่อยู่ภายใต้ GPL ถ้าเอาไปดัดแปลงต้องเปลี่ยนชื่อ ดู [TRADEMARKS.md](TRADEMARKS.md)
-- wallpaper ใน Community เป็นลิขสิทธิ์ของผู้สร้างแต่ละคน
+- You may use, modify and redistribute it, including commercially.
+- If you distribute it (modified or not), you must release the source under GPL-3.0, keep the [`NOTICE`](NOTICE) file, and credit "MacWallpaperPro by Amonthep tanlaeo".
+- The **MacWallpaperPro** name and logo are not covered by the GPL — forks must use a different name. See [TRADEMARKS.md](TRADEMARKS.md).
+- Community wallpapers belong to their respective creators.
+
+Not affiliated with Apple. Mac and macOS are trademarks of Apple Inc.
 
 Copyright © 2026 Amonthep tanlaeo

@@ -1,22 +1,25 @@
-# นโยบายการใช้ชื่อ MacWallpaperPro
+# MacWallpaperPro Trademark Policy
 
-โค้ดของโปรเจกต์นี้เผยแพร่ภายใต้ [GPL-3.0](LICENSE) คุณจะนำไปใช้ แก้ไข และแจกต่อตามเงื่อนไขของ GPL ได้
-แต่ **ชื่อ "MacWallpaperPro" และโลโก้ไม่ได้อยู่ภายใต้ GPL** และสงวนสิทธิ์ไว้โดย Amonthep tanlaeo
+The source code of this project is released under the [GPL-3.0](LICENSE). You may use, modify and redistribute it under the terms of the GPL.
+The **"MacWallpaperPro" name and logo are not licensed under the GPL** and are reserved by Amonthep tanlaeo (GPL-3.0 section 7(e)).
 
-## ทำได้ โดยไม่ต้องขออนุญาต
-- เรียกชื่อ MacWallpaperPro เพื่ออ้างถึงโปรเจกต์นี้ เช่น ในบทความ รีวิว หรือบทเรียน
-- แจกต่อแอปเวอร์ชันทางการโดยไม่แก้ไขอะไร
-- บอกว่างานของคุณ "พัฒนาต่อจาก MacWallpaperPro" หรือ "based on MacWallpaperPro"
+## Allowed without asking
 
-## ต้องขออนุญาตก่อน
-- ใช้ชื่อหรือโลโก้ MacWallpaperPro กับเวอร์ชันที่แก้ไขแล้ว
-- ใช้ชื่อหรือโลโก้ในชื่อสินค้า โดเมน แอป หรือบัญชีโซเชียล
-- ทำให้ผู้ใช้เข้าใจว่างานของคุณเป็นเวอร์ชันทางการ หรือได้รับการรับรองจากเรา
+- Referring to MacWallpaperPro by name to talk about this project (articles, reviews, tutorials)
+- Redistributing unmodified official releases
+- Saying your work is "based on MacWallpaperPro"
 
-## ถ้าคุณ fork ไปพัฒนาต่อ
-1. เปลี่ยนชื่อแอปและไอคอน
-2. เปลี่ยน bundle identifier (`com.macwallpaperpro.app`) และ URL scheme (`macwallpaperpro://`)
-3. ชี้ Community ไปที่เซิร์ฟเวอร์ของคุณเอง แล้วสร้างคู่กุญแจเซ็นไฟล์ของคุณเอง
-4. คงไฟล์ `LICENSE` และ `NOTICE` ไว้ และให้ credit ว่า "based on MacWallpaperPro by Amonthep tanlaeo"
+## Requires permission
 
-สอบถามเพิ่มเติม: amontheptanlaeo111@gmail.com
+- Using the MacWallpaperPro name or logo for a modified version
+- Using the name or logo in a product name, domain name, app name or social media account
+- Implying that your work is official or endorsed by this project
+
+## If you fork the project
+
+1. Rename the app and replace the icon
+2. Change the bundle identifier (`com.macwallpaperpro.app`) and URL scheme (`macwallpaperpro://`)
+3. Point the Community client at your own server and generate your own signing key pair
+4. Keep the `LICENSE` and `NOTICE` files and credit "based on MacWallpaperPro by Amonthep tanlaeo"
+
+Questions: open an issue or contact the maintainer through GitHub.

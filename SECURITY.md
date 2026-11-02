@@ -24,11 +24,3 @@ Out of scope: denial of service by volume, social engineering, issues in third-p
 ## Supported versions
 
 Only the latest release receives security fixes.
-
----
-
-# นโยบายความปลอดภัย (ภาษาไทย)
-
-**อย่าเปิด issue สาธารณะสำหรับปัญหาความปลอดภัย** แจ้งแบบส่วนตัวผ่านปุ่ม
-[Report a vulnerability](https://github.com/amontheptanlaeo/MacWallpaperPro/security/advisories/new)
-ในแท็บ Security ของ repo นี้ เราจะตอบกลับภายใน 3 วัน และให้เครดิตผู้แจ้งในบันทึกการอัปเดต
