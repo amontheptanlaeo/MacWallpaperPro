@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ร้านชุมชน | MacWallpaperPro</title>
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#06040f">
+<link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bai+Jamjuree:wght@400;500;600;700&family=IBM+Plex+Sans+Thai+Looped:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/assets/site.css">
+<script type="module" src="/assets/js/chrome.js"></script>
+<script type="module" src="/assets/js/store.js"></script>
+</head>
+<body class="page">
+<a class="skip" href="#main">ข้ามไปเนื้อหา</a>
+<header class="menubar" data-menubar></header>
+<main id="main" class="shell">
+  <div class="page-head">
+    <div><h1>ร้านวอลเปเปอร์ชุมชน</h1><p class="muted">วอลเปเปอร์สดจากผู้สร้าง ทุกชิ้นผ่านการตรวจก่อนขึ้นร้าน</p></div>
+    <a class="btn small" href="/community/upload">อัปโหลดของคุณ</a>
+  </div>
+  <form class="toolbar" role="search" data-search>
+    <div class="search">
+      <label for="q" class="sr-only">ค้นหาวอลเปเปอร์</label>
+      <span data-ico="search"></span>
+      <input id="q" type="search" name="q" placeholder="ค้นหาชื่อ คำอธิบาย หรือผู้สร้าง" autocomplete="off">
+    </div>
+    <div class="segmented" role="group" aria-label="เรียงตาม">
+      <button type="button" data-sort="new" aria-pressed="true">มาใหม่</button>
+      <button type="button" data-sort="popular" aria-pressed="false">ยอดนิยม</button>
+    </div>
+  </form>
+  <div class="chips" data-tags aria-label="กรองตามแท็ก"></div>
+  <p class="sr-only" aria-live="polite" data-count></p>
+  <div class="grid" data-grid></div>
+  <div class="more"><button class="btn hidden" type="button" data-more>โหลดเพิ่ม</button></div>
+</main>
+</body>
+</html>

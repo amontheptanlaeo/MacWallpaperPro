@@ -1,0 +1,6 @@
+# Copy to .dev.vars (gitignored). Never commit real values.
+SIGNING_KEY_PKCS8=<base64 PKCS#8 DER Ed25519 private key>
+# Stripe test-mode keys (prefer a restricted key rk_test_...). Leave empty to disable payments locally.
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+ADMIN_EMAILS=admin@example.com

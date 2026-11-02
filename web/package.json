@@ -1,0 +1,22 @@
+{
+  "name": "macwallpaperpro-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "db:migrate": "wrangler d1 migrations apply DB --local",
+    "seed": "node scripts/seed.mjs",
+    "setup": "npm run db:migrate && npm run seed",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.23.0",
+    "@vitest/runner": "4.1",
+    "@vitest/snapshot": "4.1",
+    "typescript": "^7.0.2",
+    "vitest": "4.1",
+    "wrangler": "^4.156.1"
+  }
+}

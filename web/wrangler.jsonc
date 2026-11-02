@@ -1,0 +1,42 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "macwallpaperpro-web",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Static site (landing + community UI). The Worker runs first only for dynamic paths.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "html_handling": "drop-trailing-slash",
+    "not_found_handling": "404-page",
+    "run_worker_first": ["/api/*", "/preview/*", "/download", "/app/*", "/community/w/*"]
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "macwallpaperpro",
+      // Placeholder for local dev. Replace with the real id after `wrangler d1 create macwallpaperpro`.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "./migrations"
+    }
+  ],
+
+  "r2_buckets": [
+    // Private bucket: never enable public access. All reads go through the Worker.
+    { "binding": "BUCKET", "bucket_name": "macwallpaperpro-files" }
+  ],
+
+  "vars": {
+    "PLATFORM_FEE_PERCENT": "20",
+    "ADMIN_EMAILS": "",
+    "STRIPE_API_VERSION": "2026-09-30.endive",
+    "STRIPE_CONNECT_COUNTRY": "th",
+    // Optional extra allowed Origins for state-changing requests (comma separated).
+    "ALLOWED_ORIGINS": ""
+  },
+
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
+}
