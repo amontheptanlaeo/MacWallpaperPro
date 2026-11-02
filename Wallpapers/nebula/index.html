@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nebula Flow</title>
+<!--
+  Nebula Flow — wallpaper เริ่มต้นของ MacWallpaperPro
+  - พื้นหลัง: nebula แบบ domain-warp (WebGL) + เลนส์ความโน้มถ่วงรอบเคอร์เซอร์ + คลื่นเมื่อคลิก
+  - อนุภาค: ไหลตาม flow field, หมุนวนรอบเคอร์เซอร์, ระเบิดออกเมื่อคลิก
+  - เคอร์เซอร์: วงแหวนเรืองแสง + เส้น constellation เชื่อมดาวใกล้ๆ
+  - ไม่ขยับเมาส์ 4 วินาที → โหมด autopilot ลอยเอง
+  เปิดในเบราว์เซอร์ได้ตรงๆ เพื่อแก้ไข/ทดลอง · MacWallpaperPro ส่งสีผ่าน window.setP({c1,c2,c3,speed})
+-->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05030c; }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<canvas id="fx"></canvas>
+<canvas id="cur"></canvas>
+<script>
+(() => {
+'use strict';
+
+// ---------- Params (MyStyle เขียนทับผ่าน setP) ----------
+const P = { c1: [0.20, 0.95, 0.80], c2: [0.62, 0.30, 1.00], c3: [0.02, 0.01, 0.06], speed: 1 };
+window.setP = o => { Object.assign(P, o); };
+const rgb = (c, a = 1, k = 1) =>
+  `rgba(${Math.min(255, c[0] * 255 * k) | 0},${Math.min(255, c[1] * 255 * k) | 0},${Math.min(255, c[2] * 255 * k) | 0},${a})`;
+const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// ---------- Input ----------
+let W = innerWidth, H = innerHeight, now = 0, T = 0;
+const M = { x: W / 2, y: H / 2, tx: W / 2, ty: H / 2, rx: W / 2, ry: H / 2, last: -1e9, E: 0 };
+addEventListener('mousemove', e => {
+  const dx = e.clientX - M.rx, dy = e.clientY - M.ry;
+  M.rx = e.clientX; M.ry = e.clientY; M.last = now;
+  M.E = Math.min(1, M.E + Math.hypot(dx, dy) / 500);
+});
+addEventListener('mousedown', e => burst(e.clientX, e.clientY, 1));
+
+// ---------- Background (WebGL) ----------
+const bg = document.getElementById('bg');
+const gl = bg.getContext('webgl', { antialias: false, premultipliedAlpha: false });
+const BG_SCALE = 0.5;
+const FS = `precision highp float;
+uniform vec2 R; uniform float T; uniform vec2 MS; uniform float E;
+uniform vec3 C1, C2, C3; uniform vec4 RP[6];
+float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float n(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+  return mix(mix(h(i),h(i+vec2(1.,0.)),f.x),mix(h(i+vec2(0.,1.)),h(i+vec2(1.,1.)),f.x),f.y);}
+float fbm(vec2 p){float v=0.,a=.5;mat2 m=mat2(1.6,1.2,-1.2,1.6);
+  for(int i=0;i<5;i++){v+=a*n(p);p=m*p;a*=.5;}return v;}
+void main(){
+  vec2 fc=gl_FragCoord.xy; float s=min(R.x,R.y);
+  vec2 uv=(fc-.5*R)/s, m=(MS-.5*R)/s;
+  float ring=0.;
+  for(int i=0;i<6;i++){
+    vec4 r=RP[i]; float age=T-r.z; if(age<0.||age>3.) continue;
+    vec2 d=uv-(r.xy-.5*R)/s; float dist=length(d);
+    float w=exp(-pow((dist-age*.6)*16.,2.))*(1.-age/3.)*r.w;
+    uv+=d/(dist+1e-4)*w*.05; ring+=w;
+  }
+  vec2 dm=uv-m; float md=length(dm);
+  uv-=dm*.10*exp(-md*md*7.)*(.5+E);
+  float t=T*.045;
+  vec2 q=vec2(fbm(uv*1.6+t),fbm(uv*1.6-t+3.1));
+  vec2 r2=vec2(fbm(uv*1.4+q*1.8+vec2(1.7,9.2)+t*1.3),fbm(uv*1.4+q*1.8+vec2(8.3,2.8)-t));
+  float f=fbm(uv*1.2+r2*1.6);
+  vec3 col=C3;
+  col=mix(col,C2*.55,smoothstep(.3,.9,f));
+  col=mix(col,C1*.6,smoothstep(.6,1.1,r2.x*f*1.7));
+  col+=C2*.3*pow(f,3.);
+  float glow=exp(-md*md*5.)*(.25+.45*E);
+  col+=mix(C1,C2,.35)*glow*(.35+f);
+  col+=(C1*.7+vec3(.35))*ring*.4;
+  float st=h(floor(fc/1.5)); col+=step(.9982,st)*(.5+.5*sin(T*2.+st*80.))*.9;
+  col*=1.-.5*dot(uv*.8,uv*.8);
+  gl_FragColor=vec4(col,1.);
+}`;
+let U = {};
+const ripples = Array.from({ length: 6 }, () => [0, 0, -99, 0]);
+let rippleIdx = 0;
+(function initGL() {
+  const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o);
+    if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(o); return o; };
+  const pr = gl.createProgram();
+  gl.attachShader(pr, sh(gl.VERTEX_SHADER, 'attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}'));
+  gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(pr); gl.useProgram(pr);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(pr, 'p'); gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  for (const k of ['R', 'T', 'MS', 'E', 'C1', 'C2', 'C3', 'RP']) U[k] = gl.getUniformLocation(pr, k);
+})();
+
+// ---------- Particles (Canvas 2D) ----------
+const fx = document.getElementById('fx'), fctx = fx.getContext('2d');
+const cur = document.getElementById('cur'), cctx = cur.getContext('2d');
+const DPR = Math.min(devicePixelRatio || 1, 1.5);
+let N = 0, px, py, vx, vy, life;
+const sparks = [];
+
+function resize() {
+  W = innerWidth; H = innerHeight;
+  bg.width = W * BG_SCALE; bg.height = H * BG_SCALE; gl.viewport(0, 0, bg.width, bg.height);
+  for (const c of [fx, cur]) { c.width = W * DPR; c.height = H * DPR; }
+  fctx.setTransform(DPR, 0, 0, DPR, 0, 0); cctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  N = clamp(Math.round(W * H / 650), 800, 3600);
+  px = new Float32Array(N); py = new Float32Array(N); vx = new Float32Array(N); vy = new Float32Array(N); life = new Float32Array(N);
+  for (let i = 0; i < N; i++) spawn(i, true);
+}
+function spawn(i, anywhere) {
+  px[i] = Math.random() * W; py[i] = Math.random() * H;
+  vx[i] = vy[i] = 0; life[i] = 120 + Math.random() * 380;
+  if (!anywhere && Math.random() < 0.3) { // เกิดใกล้เคอร์เซอร์บ้าง ให้รอบๆ ดูหนาแน่น
+    const a = Math.random() * 6.283, r = 60 + Math.random() * 220;
+    px[i] = M.x + Math.cos(a) * r; py[i] = M.y + Math.sin(a) * r;
+  }
+}
+const field = (x, y, t) =>
+  (Math.sin(x * 0.0021 + t * 0.21) + Math.cos(y * 0.0027 - t * 0.17) + Math.sin((x + y) * 0.0013 + t * 0.11)) * 1.7;
+
+function burst(x, y, strength) {
+  ripples[rippleIdx] = [x * BG_SCALE, (H - y) * BG_SCALE, T, strength];
+  rippleIdx = (rippleIdx + 1) % ripples.length;
+  const R = 320 * strength;
+  for (let i = 0; i < N; i++) {
+    const dx = px[i] - x, dy = py[i] - y, d = Math.hypot(dx, dy) + 1e-3;
+    if (d < R) { const f = (1 - d / R) * 16 * strength; vx[i] += dx / d * f; vy[i] += dy / d * f; }
+  }
+  const n = 70 * strength;
+  for (let k = 0; k < n; k++) {
+    const a = Math.random() * 6.283, s = 2 + Math.random() * 9 * strength;
+    sparks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, l: 1, w: Math.random() });
+  }
+  M.E = 1;
+}
+
+// ---------- Loop ----------
+const BUCKETS = 5;
+const paths = Array.from({ length: BUCKETS }, () => []);
+let lastFrame = performance.now(), nextAutoBurst = 6;
+
+function frame(ms) {
+  const dt = Math.min(0.05, (ms - lastFrame) / 1000); lastFrame = ms;
+  now = ms / 1000; T += dt * P.speed;
+  const sp = P.speed;
+
+  // autopilot เมื่อไม่ขยับเมาส์
+  const idle = clamp((now - M.last - 4) / 2, 0, 1);
+  const ax = W / 2 + Math.sin(T * 0.23) * W * 0.32 + Math.sin(T * 0.61) * W * 0.06;
+  const ay = H / 2 + Math.sin(T * 0.37 + 1) * H * 0.26;
+  M.tx = M.rx + (ax - M.rx) * idle; M.ty = M.ry + (ay - M.ry) * idle;
+  M.x += (M.tx - M.x) * 0.2; M.y += (M.ty - M.y) * 0.2;
+  M.E *= 0.965; if (idle > 0.5) M.E = Math.max(M.E, 0.25);
+  if (idle >= 1 && T > nextAutoBurst) { burst(M.x, M.y, 0.45); nextAutoBurst = T + 7 + Math.random() * 5; }
+
+  // background
+  gl.uniform2f(U.R, bg.width, bg.height); gl.uniform1f(U.T, T);
+  gl.uniform2f(U.MS, M.x * BG_SCALE, (H - M.y) * BG_SCALE); gl.uniform1f(U.E, M.E);
+  gl.uniform3fv(U.C1, P.c1); gl.uniform3fv(U.C2, P.c2); gl.uniform3fv(U.C3, P.c3);
+  gl.uniform4fv(U.RP, ripples.flat());
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  // particles: จางหางเดิม แล้ววาดเส้นใหม่แบบ additive
+  fctx.globalCompositeOperation = 'destination-out';
+  fctx.fillStyle = 'rgba(0,0,0,0.11)'; fctx.fillRect(0, 0, W, H);
+  fctx.globalCompositeOperation = 'lighter';
+  for (const p of paths) p.length = 0;
+
+  const R = 230 + M.E * 120, R2 = R * R, swirl = 0.55 + M.E * 0.9;
+  const near = [];
+  for (let i = 0; i < N; i++) {
+    let x = px[i], y = py[i];
+    const a = field(x, y, T);
+    vx[i] += Math.cos(a) * 0.07 * sp; vy[i] += Math.sin(a) * 0.07 * sp;
+    const dx = x - M.x, dy = y - M.y, d2 = dx * dx + dy * dy;
+    if (d2 < R2) {
+      const d = Math.sqrt(d2) + 1e-3, f = 1 - d / R;
+      vx[i] += (-dy / d * swirl - dx / d * 0.28) * f;
+      vy[i] += (dx / d * swirl - dy / d * 0.28) * f;
+      if (d < 36) { vx[i] += dx / d * 1.4; vy[i] += dy / d * 1.4; }
+      if (d < 170 && near.length < 34) near.push(i, d);
+    }
+    vx[i] *= 0.955; vy[i] *= 0.955;
+    const nx = x + vx[i], ny = y + vy[i];
+    const s = Math.min(BUCKETS - 1, (Math.hypot(vx[i], vy[i]) * 0.9) | 0);
+    paths[s].push(x, y, nx, ny);
+    px[i] = nx; py[i] = ny;
+    if (--life[i] < 0 || nx < -20 || ny < -20 || nx > W + 20 || ny > H + 20) spawn(i, false);
+  }
+  for (let b = 0; b < BUCKETS; b++) {
+    const p = paths[b]; if (!p.length) continue;
+    const t = b / (BUCKETS - 1);
+    fctx.strokeStyle = rgb(mix(P.c2, P.c1, t), 0.35 + t * 0.5, 1 + t * 0.6);
+    fctx.lineWidth = 0.8 + t * 0.9;
+    fctx.beginPath();
+    for (let k = 0; k < p.length; k += 4) { fctx.moveTo(p[k], p[k + 1]); fctx.lineTo(p[k + 2], p[k + 3]); }
+    fctx.stroke();
+  }
+
+  // cursor layer
+  cctx.clearRect(0, 0, W, H);
+  cctx.globalCompositeOperation = 'lighter';
+  const show = 1 - idle * 0.6;
+
+  // constellation
+  cctx.lineWidth = 0.7;
+  for (let k = 0; k < near.length; k += 2) {
+    const i = near[k], d = near[k + 1], a = (1 - d / 170) * 0.55 * show;
+    cctx.strokeStyle = rgb(P.c1, a);
+    cctx.beginPath(); cctx.moveTo(M.x, M.y); cctx.lineTo(px[i], py[i]); cctx.stroke();
+    cctx.fillStyle = rgb(P.c1, a * 1.6, 1.4);
+    cctx.beginPath(); cctx.arc(px[i], py[i], 1.6, 0, 6.283); cctx.fill();
+  }
+
+  // halo
+  const r = 22 + M.E * 16;
+  const g = cctx.createRadialGradient(M.x, M.y, 0, M.x, M.y, r * 4);
+  g.addColorStop(0, rgb(mix(P.c1, P.c2, 0.4), 0.28 * show, 1.3));
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  cctx.fillStyle = g; cctx.beginPath(); cctx.arc(M.x, M.y, r * 4, 0, 6.283); cctx.fill();
+  cctx.lineWidth = 1.6;
+  for (let k = 0; k < 3; k++) {
+    const rot = T * (1.2 + k * 0.5) * (k % 2 ? -1 : 1);
+    cctx.strokeStyle = rgb(k === 1 ? P.c2 : P.c1, (0.7 - k * 0.18) * show, 1.3);
+    cctx.beginPath(); cctx.arc(M.x, M.y, r + k * 7, rot, rot + 1.6 + k * 0.6); cctx.stroke();
+  }
+  for (let k = 0; k < 4; k++) {
+    const a = T * 2.2 + k * 1.571, rr = r + 14;
+    cctx.fillStyle = rgb(P.c1, 0.9 * show, 1.5);
+    cctx.beginPath(); cctx.arc(M.x + Math.cos(a) * rr, M.y + Math.sin(a) * rr, 1.8, 0, 6.283); cctx.fill();
+  }
+
+  // sparks
+  for (let k = sparks.length - 1; k >= 0; k--) {
+    const s = sparks[k];
+    s.x += s.vx; s.y += s.vy; s.vx *= 0.94; s.vy *= 0.94; s.l -= 0.018;
+    if (s.l <= 0) { sparks.splice(k, 1); continue; }
+    cctx.fillStyle = rgb(mix(P.c1, P.c2, s.w), s.l, 1.6);
+    cctx.beginPath(); cctx.arc(s.x, s.y, 1 + s.l * 2.2, 0, 6.283); cctx.fill();
+  }
+
+  requestAnimationFrame(frame);
+}
+
+addEventListener('resize', resize);
+resize();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

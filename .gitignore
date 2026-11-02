@@ -1,0 +1,20 @@
+# ความลับ — ห้าม commit เด็ดขาด
+secrets/
+*.p8
+*.pem
+.dev.vars
+.env
+.env.*
+
+# build outputs
+.build/
+build/
+dist/
+DerivedData/
+
+# web
+node_modules/
+.wrangler/
+
+# macOS
+.DS_Store
