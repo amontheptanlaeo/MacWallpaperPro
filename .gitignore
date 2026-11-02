@@ -31,3 +31,6 @@ node_modules/
 
 # Community video wallpapers (binaries hosted separately; see Wallpapers-video/SOURCES.md)
 Wallpapers-video/*/video.mp4
+
+# marketing videos (large binaries)
+marketing/*.mp4
