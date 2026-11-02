@@ -1,3 +1,4 @@
+import { adsenseMeta } from "../lib/ads";
 import { adConfig, type AdConfig, type SlotName } from "../lib/ads";
 import { escapeHtml as e, html } from "../lib/http";
 import { clientDict, LANGUAGES, pickLanguage, readCookie, translator, type Language, type T } from "../lib/i18n";
@@ -151,6 +152,7 @@ export function page(ctx: Ctx, o: PageOpts, footerExtra = ""): Response {
 <title>${e(title)}</title>
 <meta name="description" content="${e(desc)}">
 <meta name="color-scheme" content="dark">
+${adsenseMeta(ctx.env)}
 <meta name="theme-color" content="#070814">
 ${o.noindex ? '<meta name="robots" content="noindex">' : ""}
 <link rel="canonical" href="${e(canonical)}">

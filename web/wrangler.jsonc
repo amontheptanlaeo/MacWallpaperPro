@@ -40,7 +40,7 @@
     // Optional extra allowed Origins for state-changing requests (comma separated).
     "ALLOWED_ORIGINS": "",
     // Google AdSense. Leave empty to show no ads at all (no ad markup, no ad CSP, no consent banner).
-    "ADSENSE_CLIENT": "",
+    "ADSENSE_CLIENT": "ca-pub-5873755708069276",
     "ADSENSE_SLOT_BROWSE": "",
     "ADSENSE_SLOT_DETAIL": "",
     "ADSENSE_SLOT_FOOTER": "",

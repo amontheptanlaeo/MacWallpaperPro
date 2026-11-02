@@ -50,3 +50,9 @@ export function adsTxt(env: Env): string | null {
   if (!cfg) return null;
   return `google.com, ${cfg.client.replace(/^ca-/, "")}, DIRECT, f08c47fec0942fa0\n`;
 }
+
+/** Site-ownership verification for AdSense — on every page once a publisher id is set (no script, no CSP change). */
+export function adsenseMeta(env: Env): string {
+  const cfg = adConfig(env);
+  return cfg ? `<meta name="google-adsense-account" content="${escapeHtml(cfg.client)}">` : "";
+}
