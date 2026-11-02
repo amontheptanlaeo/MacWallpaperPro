@@ -1,3 +1,5 @@
+import { escapeHtml } from "./lib/http";
+import { adsTxt, adsenseMeta } from "./lib/ads";
 import { checkOrigin } from "./lib/auth";
 import { errorResponse, HttpError } from "./lib/http";
 import * as admin from "./routes/admin";
@@ -78,9 +80,38 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   return site.notFound(request, env);
 }
 
+/**
+ * Root domain (elizos.com / www): forwards everything to the site, but answers /ads.txt itself and
+ * serves a tiny verification page at "/" — AdSense reads both on the root domain.
+ */
+function apexResponse(request: Request, env: Env): Response | null {
+  const url = new URL(request.url);
+  const site = new URL(String(env.SITE_URL || "https://macwallpaper.elizos.com"));
+  // only the parent of the site's host (elizos.com) and its www — never other hosts
+  const root = site.hostname.split(".").slice(1).join(".");
+  if (!root.includes(".") || (url.hostname !== root && url.hostname !== `www.${root}`)) return null;
+  if (url.pathname === "/ads.txt") {
+    const body = adsTxt(env);
+    return new Response(body ?? "", { status: body ? 200 : 404, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=3600" } });
+  }
+  const target = new URL(url.pathname + url.search, site).toString();
+  if (url.pathname === "/" && request.method === "GET") {
+    const t = escapeHtml(target);
+    return new Response(
+      `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>MacWallpaperPro</title>${adsenseMeta(env)}` +
+        `<link rel="canonical" href="${t}"><meta http-equiv="refresh" content="0;url=${t}"></head>` +
+        `<body><p><a href="${t}">MacWallpaperPro — live wallpapers for Mac</a></p></body></html>`,
+      { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=3600" } },
+    );
+  }
+  return Response.redirect(target, 301);
+}
+
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     try {
+      const apex = apexResponse(request, env);
+      if (apex) return apex;
       return await route(request, env, ctx);
     } catch (e) {
       const url = new URL(request.url);

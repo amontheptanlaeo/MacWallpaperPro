@@ -5,7 +5,12 @@
   "compatibility_date": "2026-08-22",
 
   // Production hostname (Workers custom domain on the elizos.com zone). Local dev keeps using localhost:8787.
-  "routes": [{ "pattern": "macwallpaper.elizos.com", "custom_domain": true }],
+  "routes": [
+    { "pattern": "macwallpaper.elizos.com", "custom_domain": true },
+    // root domain → forwards to the site; serves ads.txt + AdSense verification itself
+    { "pattern": "elizos.com", "custom_domain": true },
+    { "pattern": "www.elizos.com", "custom_domain": true }
+  ],
   "workers_dev": false,
 
   // Static files (fonts, CSS, JS, i18n). Every HTML page is rendered by the Worker so it can pick the
