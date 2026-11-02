@@ -151,8 +151,40 @@ struct DiscoverView: View {
                         GetButton(item: item)
                     }
                     .accessibilityAction(named: Text(tr("Get"))) { Task { await community.install(id: item.id) } }
+                    .onAppear {
+                        // infinite scroll: fetch the next page as the last few tiles come into view
+                        if let i = community.items.firstIndex(where: { $0.id == item.id }), i >= community.items.count - 4 {
+                            Task { await community.loadMore() }
+                        }
+                    }
+                    .contextMenu {
+                        if let w = community.installedWallpaper(item.id) {
+                            Button(tr("Set as wallpaper")) { community.use(w) }
+                            Divider()
+                            Button(tr("Remove from Mac…"), role: .destructive) { community.requestRemove(w) }
+                        } else {
+                            Button(tr("Get")) { Task { await community.install(id: item.id) } }
+                        }
+                    }
                 }
             }
+            pagingFooter
+        }
+    }
+
+    /// Spinner while the next page loads; a button as a fallback (and for keyboard/VoiceOver users)
+    @ViewBuilder
+    private var pagingFooter: some View {
+        if community.loadingMore {
+            ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, Space.lg)
+        } else if community.nextCursor != nil {
+            Button(tr("Load more")) { Task { await community.loadMore() } }
+                .buttonStyle(SecondaryButtonStyle())
+                .frame(maxWidth: .infinity).padding(.vertical, Space.lg)
+        } else if community.items.count > 8 {
+            Text(tr("That's everything for now."))
+                .font(TypeScale.secondary).foregroundStyle(Theme.textSecondary)
+                .frame(maxWidth: .infinity).padding(.vertical, Space.lg)
         }
     }
 

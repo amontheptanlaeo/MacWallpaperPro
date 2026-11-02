@@ -102,6 +102,7 @@ struct MainView: View {
         .ignoresSafeArea()
         .frame(minWidth: 1000, minHeight: 640)
         .preferredColorScheme(.dark)
+        .modifier(RemovalDialogs())
         .localized()
     }
 
@@ -473,5 +474,34 @@ struct StateCard<Actions: View>: View {
 extension StateCard where Actions == EmptyView {
     init(symbol: String, title: String, message: String) {
         self.init(symbol: symbol, title: title, message: message) { EmptyView() }
+    }
+}
+
+// MARK: - Removal confirmations (shared by Library, Discover and Settings)
+
+private struct RemovalDialogs: ViewModifier {
+    @ObservedObject private var community = Community.shared
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(
+                tr("Remove “%@” from this Mac?", community.pendingRemoval?.manifest.title ?? ""),
+                isPresented: Binding(get: { community.pendingRemoval != nil },
+                                     set: { if !$0 { community.pendingRemoval = nil } }),
+                presenting: community.pendingRemoval
+            ) { w in
+                Button(tr("Remove"), role: .destructive) { community.uninstall(w) }
+                Button(tr("Cancel"), role: .cancel) {}
+            } message: { w in
+                Text(tr("Frees %@. You can reinstall it from Discover at any time.",
+                        ByteCountFormatter.string(fromByteCount: community.sizes[w.id] ?? Int64(w.manifest.sizeBytes), countStyle: .file)))
+            }
+            .confirmationDialog(tr("Remove all Community wallpapers?"), isPresented: $community.confirmRemoveAll) {
+                Button(tr("Remove all"), role: .destructive) { community.removeAll() }
+                Button(tr("Cancel"), role: .cancel) {}
+            } message: {
+                Text(tr("Frees %@. You can reinstall them from Discover at any time.",
+                        ByteCountFormatter.string(fromByteCount: community.totalSize, countStyle: .file)))
+            }
     }
 }

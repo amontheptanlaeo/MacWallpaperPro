@@ -124,6 +124,7 @@ struct SettingsView: View {
 
 struct GeneralPage: View {
     @EnvironmentObject var store: Store
+    @ObservedObject private var community = Community.shared
     @State private var desktopIconsVisible = GeneralPage.readDesktopIcons()
 
     var body: some View {
@@ -144,6 +145,46 @@ struct GeneralPage: View {
                     .accessibilityLabel(tr("Reload wallpaper"))
             }
         }
+        storage
+    }
+
+    /// Space used by Community downloads, with per-item and bulk removal
+    @ViewBuilder
+    private var storage: some View {
+        let list = community.installed
+        SettingsGroup(title: tr("Storage"),
+                      footer: list.isEmpty ? nil : tr("Wallpapers that come with the app take no extra space and can't be removed.")) {
+            SettingRow(title: tr("Community wallpapers"),
+                       subtitle: list.isEmpty
+                           ? tr("No Community wallpapers installed")
+                           : tr("%1$d wallpapers · %2$@", list.count,
+                                ByteCountFormatter.string(fromByteCount: community.totalSize, countStyle: .file)),
+                       icon: "internaldrive") {
+                if !list.isEmpty {
+                    Button(role: .destructive) { community.confirmRemoveAll = true } label: {
+                        Text(tr("Remove all…"))
+                    }
+                    .buttonStyle(SecondaryButtonStyle(tint: Theme.destructiveText))
+                }
+            }
+            ForEach(list) { w in
+                SettingRow(title: w.manifest.title,
+                           subtitle: storageSubtitle(w),
+                           appIcon: NSImage(contentsOf: w.thumbURL)) {
+                    Button { community.requestRemove(w) } label: { Image(systemName: "trash") }
+                        .buttonStyle(IconButtonStyle())
+                        .help(tr("Remove from Mac…"))
+                        .accessibilityLabel(tr("Remove “%@” from this Mac?", w.manifest.title))
+                }
+            }
+        }
+    }
+
+    private func storageSubtitle(_ w: InstalledWallpaper) -> String {
+        let size = ByteCountFormatter.string(fromByteCount: community.sizes[w.id] ?? Int64(w.manifest.sizeBytes), countStyle: .file)
+        let inUse = store.config.wallpaperMode == .installed && store.config.installedID == w.id
+        let kind = w.isVideo ? tr("Video") : tr("Interactive")
+        return inUse ? "\(kind) · \(size) · \(tr("In use"))" : "\(kind) · \(size)"
     }
 
     private static func readDesktopIcons() -> Bool {

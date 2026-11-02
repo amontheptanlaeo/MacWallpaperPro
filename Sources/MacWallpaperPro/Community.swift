@@ -168,9 +168,18 @@ final class Community: ObservableObject {
     @Published private(set) var items: [WallpaperSummary] = []
     @Published private(set) var installed: [InstalledWallpaper] = []
     @Published private(set) var loading = false
+    @Published private(set) var loadingMore = false
+    /// Cursor for the next page (nil = everything loaded)
+    @Published private(set) var nextCursor: String?
+    private var lastQuery: [URLQueryItem] = []
     @Published private(set) var loadError: String?
     @Published private(set) var installing: Set<String> = []
     @Published var notice: (text: String, isError: Bool)?
+    /// A removal waiting for the user's confirmation (one dialog at the app root serves every entry point)
+    @Published var pendingRemoval: InstalledWallpaper?
+    @Published var confirmRemoveAll = false
+    /// Bytes on disk per installed wallpaper id (refreshed on every scan)
+    @Published private(set) var sizes: [String: Int64] = [:]
 
     /// The official MacWallpaperPro site; users can't change it
     static let officialURL = URL(string: "https://macwallpaper.elizos.com")!
@@ -183,7 +192,10 @@ final class Community: ObservableObject {
             .appendingPathComponent("MacWallpaperPro/Wallpapers", isDirectory: true)
     }
 
-    private init() { scanInstalled() }
+    private init() {
+        scanInstalled()
+        cleanUpStorage()
+    }
 
     // MARK: Browse
 
@@ -195,11 +207,31 @@ final class Community: ObservableObject {
         c.queryItems = [URLQueryItem(name: "sort", value: sort), URLQueryItem(name: "kind", value: videosOnly ? "video" : "all")]
             + (query.isEmpty ? [] : [URLQueryItem(name: "q", value: query)])
             + (category.map { [URLQueryItem(name: "category", value: $0)] } ?? [])
+        lastQuery = c.queryItems ?? []
         do {
             let page: WallpaperListResponse = try await getJSON(c.url!)
             items = page.items
+            nextCursor = page.next
         } catch {
             loadError = error.localizedDescription
+            nextCursor = nil
+        }
+    }
+
+    /// Next page of the current listing (same sort/filters), appended without duplicates
+    func loadMore() async {
+        guard let cursor = nextCursor, !loading, !loadingMore else { return }
+        loadingMore = true
+        defer { loadingMore = false }
+        var c = URLComponents(url: baseURL.appendingPathComponent("api/wallpapers"), resolvingAgainstBaseURL: false)!
+        c.queryItems = lastQuery + [URLQueryItem(name: "cursor", value: cursor)]
+        do {
+            let page: WallpaperListResponse = try await getJSON(c.url!)
+            let seen = Set(items.map(\.id))
+            items += page.items.filter { !seen.contains($0.id) }
+            nextCursor = page.next
+        } catch {
+            notice = (error.localizedDescription, true)
         }
     }
 
@@ -342,12 +374,55 @@ final class Community: ObservableObject {
     }
 
     func uninstall(_ w: InstalledWallpaper) {
+        let wasActive = Store.shared.config.installedID == w.id
         try? FileManager.default.removeItem(at: w.folder)
-        if Store.shared.config.installedID == w.id, Store.shared.config.wallpaperMode == .installed {
-            Store.shared.config.wallpaperMode = .interactive
-            Store.shared.config.lastActiveMode = .interactive
+        if wasActive {
+            Store.shared.config.installedID = ""
+            if Store.shared.config.wallpaperMode == .installed { Store.shared.config.wallpaperMode = .interactive }
+            if Store.shared.config.lastActiveMode == .installed { Store.shared.config.lastActiveMode = .interactive }
         }
         scanInstalled()
+        notice = (tr("Removed “%@” from this Mac.", w.manifest.title), false)
+    }
+
+    /// Ask before removing (the dialog lives at the app root)
+    func requestRemove(_ w: InstalledWallpaper) { pendingRemoval = w }
+
+    func removeAll() {
+        let all = installed
+        for w in all { try? FileManager.default.removeItem(at: w.folder) }
+        if Store.shared.config.wallpaperMode == .installed { Store.shared.config.wallpaperMode = .interactive }
+        if Store.shared.config.lastActiveMode == .installed { Store.shared.config.lastActiveMode = .interactive }
+        Store.shared.config.installedID = ""
+        scanInstalled()
+        cleanUpStorage()
+        notice = (tr("Removed all Community wallpapers."), false)
+    }
+
+    var totalSize: Int64 { sizes.values.reduce(0, +) }
+
+    /// Delete leftovers that would otherwise pile up: interrupted downloads (.tmp-*) and folders that
+    /// failed verification (they are never shown or used). Only runs when nothing is installing.
+    func cleanUpStorage() {
+        guard installing.isEmpty else { return }
+        let fm = FileManager.default
+        let valid = Set(installed.map { $0.folder.standardizedFileURL.path })
+        let dirs = (try? fm.contentsOfDirectory(at: Self.libraryFolder, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+        for dir in dirs where !valid.contains(dir.standardizedFileURL.path) {
+            let isDir = (try? dir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            if isDir { try? fm.removeItem(at: dir) }
+        }
+    }
+
+    private static func folderSize(_ url: URL) -> Int64 {
+        let keys: [URLResourceKey] = [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey]
+        guard let e = FileManager.default.enumerator(at: url, includingPropertiesForKeys: keys) else { return 0 }
+        var total: Int64 = 0
+        for case let f as URL in e {
+            let v = try? f.resourceValues(forKeys: Set(keys))
+            total += Int64(v?.totalFileAllocatedSize ?? v?.fileAllocatedSize ?? 0)
+        }
+        return total
     }
 
     /// Load the installed list, re-checking signature and hash every time; modified files are never used
@@ -376,6 +451,7 @@ final class Community: ObservableObject {
             }
         }
         .sorted { $0.manifest.title.localizedCompare($1.manifest.title) == .orderedAscending }
+        sizes = Dictionary(uniqueKeysWithValues: installed.map { ($0.id, Self.folderSize($0.folder)) })
     }
 
     func installedWallpaper(_ id: String) -> InstalledWallpaper? { installed.first { $0.id == id } }

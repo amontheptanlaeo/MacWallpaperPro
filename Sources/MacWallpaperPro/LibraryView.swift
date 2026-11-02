@@ -157,6 +157,11 @@ struct LibraryView: View {
                     .transition(.detailColumn(reduceMotion: reduceMotion))
             }
         }
+        // ⌫ removes the selected Community wallpaper (asks first)
+        .onDeleteCommand {
+            if case .installed(let w)? = selected?.kind { community.requestRemove(w) }
+        }
+
         .background { ThumbnailWarmer(entries: allEntries.filter { !$0.isCustom && !$0.isInstalled }) }
         .task(id: Shaders.params(store.config)) {
             // After a color change settles for 1 second -> render a new preview with the current colors
@@ -278,6 +283,8 @@ struct LibraryView: View {
         if case .installed(let w) = e.kind {
             Button(tr("View in Community")) { NSWorkspace.shared.open(community.webPage(for: w.id)) }
             Button(tr("Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([w.fileURL]) }
+            Divider()
+            Button(tr("Remove from Mac…"), role: .destructive) { community.requestRemove(w) }
         }
     }
 }
@@ -374,7 +381,6 @@ struct NowPlayingStrip: View {
 struct LibraryDetails: View {
     let entry: LibraryEntry
     @EnvironmentObject var store: Store
-    @State private var confirmDelete = false
 
     var body: some View {
         let c = store.config
@@ -443,15 +449,10 @@ struct LibraryDetails: View {
                         .buttonStyle(SecondaryButtonStyle(fullWidth: true))
                 }
             }
-            Button(role: .destructive) { confirmDelete = true } label: {
+            Button(role: .destructive) { Community.shared.requestRemove(w) } label: {
                 Label(tr("Remove from Mac…"), systemImage: "trash")
             }
             .buttonStyle(SecondaryButtonStyle(fullWidth: true, tint: Theme.destructiveText))
-            .confirmationDialog(tr("Remove “%@” from this Mac?", w.manifest.title), isPresented: $confirmDelete) {
-                Button(tr("Remove"), role: .destructive) { Community.shared.uninstall(w) }
-            } message: {
-                Text(tr("You can reinstall it from Discover at any time."))
-            }
         }
     }
 
